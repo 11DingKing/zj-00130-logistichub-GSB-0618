@@ -1,0 +1,144 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f0f2f5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.ant-layout {
+  min-height: 100vh;
+}
+
+.page-container {
+  padding: 24px;
+}
+
+.page-header {
+  margin-bottom: 16px;
+}
+
+.card-shadow {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.status-tag {
+  margin-right: 8px;
+}
+
+.dashboard-stat-card {
+  text-align: center;
+  padding: 24px;
+}
+
+.dashboard-stat-value {
+  font-size: 32px;
+  font-weight: 600;
+  color: #1890ff;
+  margin-bottom: 8px;
+}
+
+.dashboard-stat-label {
+  font-size: 14px;
+  color: #666;
+}
+
+.location-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+}
+
+.location-cell {
+  aspect-ratio: 1;
+  border: 2px solid #d9d9d9;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-size: 12px;
+  padding: 4px;
+}
+
+.location-cell:hover {
+  border-color: #1890ff;
+  transform: translateY(-2px);
+}
+
+.location-cell.available {
+  background-color: #f6ffed;
+  border-color: #b7eb8f;
+}
+
+.location-cell.occupied {
+  background-color: #fff7e6;
+  border-color: #ffd591;
+}
+
+.location-cell.locked {
+  background-color: #fff1f0;
+  border-color: #ffccc7;
+}
+
+.location-cell.maintenance {
+  background-color: #e6f7ff;
+  border-color: #91d5ff;
+}
+
+.location-cell .code {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.location-cell .usage {
+  font-size: 11px;
+  color: #888;
+}
+
+.batch-normal {
+  background-color: #f6ffed;
+}
+
+.batch-near-expiry {
+  background-color: #fff7e6;
+}
+
+.batch-expired {
+  background-color: #fff1f0;
+}
+
+.batch-slow-moving {
+  background-color: #e6f7ff;
+}
+
+.waterfall-stats {
+  display: flex;
+  justify-content: space-around;
+  padding: 16px 0;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-item .value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1890ff;
+}
+
+.stat-item .label {
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
+}

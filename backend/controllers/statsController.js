@@ -713,11 +713,11 @@ const getMerchantBillingStats = (req, res) => {
     SELECT 
       COUNT(*) as total_bills,
       SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid_bills,
-      SUM(CASE WHEN status IN ('issued', 'overdue') THEN 1 ELSE 0 END) as unpaid_bills,
+      SUM(CASE WHEN status IN ('issued', 'overdue', 'adjusted') THEN 1 ELSE 0 END) as unpaid_bills,
       SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) as overdue_bills,
-      SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as paid_amount,
-      SUM(CASE WHEN status IN ('issued', 'overdue') THEN total_amount ELSE 0 END) as unpaid_amount,
-      SUM(total_amount) as total_amount
+      SUM(CASE WHEN status = 'paid' THEN COALESCE(final_amount, total_amount) ELSE 0 END) as paid_amount,
+      SUM(CASE WHEN status IN ('issued', 'overdue', 'adjusted') THEN COALESCE(final_amount, total_amount) ELSE 0 END) as unpaid_amount,
+      SUM(COALESCE(final_amount, total_amount)) as total_amount
     FROM bills
     WHERE merchant_id = ? AND status != 'cancelled'
   `,
@@ -727,9 +727,13 @@ const getMerchantBillingStats = (req, res) => {
   const recentBills = db
     .prepare(
       `
-    SELECT b.*, COUNT(bi.id) as item_count
+    SELECT b.*, 
+           COUNT(bi.id) as item_count,
+           bd.id as dispute_id,
+           bd.status as dispute_status_info
     FROM bills b
     LEFT JOIN bill_items bi ON b.id = bi.bill_id
+    LEFT JOIN bill_disputes bd ON b.id = bd.bill_id AND bd.status IN ('pending', 'approved', 'adjusted')
     WHERE b.merchant_id = ?
     GROUP BY b.id
     ORDER BY b.created_at DESC

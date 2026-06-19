@@ -78,6 +78,7 @@ export const statsAPI = {
     api.get("/stats/slow-moving-ratio", { params }),
   getTransactions: (params) => api.get("/stats/transactions", { params }),
   getMerchantOverview: () => api.get("/stats/merchant/overview"),
+  getMerchantBilling: () => api.get("/stats/merchant/billing"),
   getIncomeTrend: (params) => api.get("/stats/income-trend", { params }),
   getWarehouseTurnover: (params) =>
     api.get("/stats/warehouse-turnover", { params }),
@@ -113,10 +114,17 @@ export const transferAPI = {
 export const billAPI = {
   getAll: (params) => api.get("/bills", { params }),
   getById: (id) => api.get(`/bills/${id}`),
-  getMyBills: () => api.get("/bills/merchant/my"),
+  getMyBills: (params) => api.get("/bills/merchant/my", { params }),
   getSummary: (params) => api.get("/bills/summary", { params }),
+  getTiers: () => api.get("/bills/tiers"),
+  saveTiers: (data) => api.post("/bills/tiers", data),
   generateMonthly: (data) => api.post("/bills/generate-monthly", data),
   markPaid: (id) => api.put(`/bills/${id}/paid`),
   markOverdue: (id) => api.put(`/bills/${id}/overdue`),
   cancel: (id) => api.put(`/bills/${id}/cancel`),
+  submitDispute: (id, data) => api.post(`/bills/${id}/dispute`, data),
+  rejectDispute: (id, disputeId, data) =>
+    api.put(`/bills/${id}/dispute/${disputeId}/reject`, data),
+  approveDispute: (id, disputeId, data) =>
+    api.put(`/bills/${id}/dispute/${disputeId}/approve`, data),
 };

@@ -74,13 +74,60 @@ const calculateDailyUsage = (leaseId, periodStart, periodEnd) => {
   };
 };
 
+const getBillingTiers = (billingMethod) => {
+  return db.prepare(`
+    SELECT * FROM billing_tiers 
+    WHERE billing_method = ? 
+    ORDER BY tier_from ASC
+  `).all(billingMethod);
+};
+
+const calculateTieredAmount = (billingMethod, totalQuantity, days) => {
+  const tiers = getBillingTiers(billingMethod);
+  if (tiers.length === 0) {
+    return { amount: 0, details: [] };
+  }
+  
+  let remaining = totalQuantity;
+  let totalAmount = 0;
+  const details = [];
+  
+  for (const tier of tiers) {
+    const tierSize = tier.tier_to ? tier.tier_to - tier.tier_from + 1 : remaining;
+    const tierQty = Math.min(remaining, tierSize);
+    
+    if (tierQty <= 0) break;
+    
+    const tierAmount = tier.unit_price * tierQty * days;
+    totalAmount += tierAmount;
+    
+    details.push({
+      tier_from: tier.tier_from,
+      tier_to: tier.tier_to,
+      unit_price: tier.unit_price,
+      quantity: Math.round(tierQty * 100) / 100,
+      amount: Math.round(tierAmount * 100) / 100,
+      description: tier.description
+    });
+    
+    remaining -= tierQty;
+    if (remaining <= 0) break;
+  }
+  
+  return {
+    amount: Math.round(totalAmount * 100) / 100,
+    details
+  };
+};
+
 const calculateLeaseAmount = (lease, periodStart, periodEnd) => {
   const days = calculateLeaseUsageDays(lease, periodStart, periodEnd);
-  if (days <= 0) return { amount: 0, days: 0, quantity: 0 };
+  if (days <= 0) return { amount: 0, days: 0, quantity: 0, tierDetails: [] };
   
   const usage = calculateDailyUsage(lease.id, periodStart, periodEnd);
   let amount = 0;
   let quantity = 0;
+  let tierDetails = [];
   
   switch (lease.billing_method) {
     case 'daily':
@@ -95,7 +142,9 @@ const calculateLeaseAmount = (lease, periodStart, periodEnd) => {
     case 'per_pallet':
     case 'per_volume':
       quantity = usage.averageUsage;
-      amount = lease.unit_price * usage.averageUsage * days;
+      const tieredResult = calculateTieredAmount(lease.billing_method, usage.averageUsage, days);
+      amount = tieredResult.amount;
+      tierDetails = tieredResult.details;
       break;
     default:
       break;
@@ -105,7 +154,8 @@ const calculateLeaseAmount = (lease, periodStart, periodEnd) => {
     amount: Math.round(amount * 100) / 100,
     days,
     quantity: Math.round(quantity * 100) / 100,
-    averageUsage: Math.round(usage.averageUsage * 100) / 100
+    averageUsage: Math.round(usage.averageUsage * 100) / 100,
+    tierDetails
   };
 };
 
@@ -117,10 +167,14 @@ const getAllBills = (req, res) => {
            u.name as merchant_name,
            u.company_name as merchant_company,
            u.phone as merchant_phone,
-           COUNT(bi.id) as item_count
+           COUNT(bi.id) as item_count,
+           bd.id as dispute_id,
+           bd.status as dispute_status_info,
+           bd.reason as dispute_reason
     FROM bills b
     LEFT JOIN users u ON b.merchant_id = u.id
     LEFT JOIN bill_items bi ON b.id = bi.bill_id
+    LEFT JOIN bill_disputes bd ON b.id = bd.bill_id AND bd.status IN ('pending', 'approved', 'adjusted')
     WHERE 1=1
   `;
   const params = [];
@@ -190,7 +244,31 @@ const getBillById = (req, res) => {
     ORDER BY bi.id
   `).all(id);
 
-  res.json({ ...bill, items });
+  const disputes = db.prepare(`
+    SELECT bd.*,
+           u.name as merchant_name,
+           admin.name as resolved_by_name
+    FROM bill_disputes bd
+    LEFT JOIN users u ON bd.merchant_id = u.id
+    LEFT JOIN users admin ON bd.resolved_by = admin.id
+    WHERE bd.bill_id = ?
+    ORDER BY bd.created_at DESC
+  `).all(id);
+
+  const adjustmentItems = db.prepare(`
+    SELECT bi.*
+    FROM bill_items bi
+    WHERE bi.bill_id = ? AND bi.billing_method = 'adjustment'
+    ORDER BY bi.id
+  `).all(id);
+
+  res.json({ 
+    ...bill, 
+    items, 
+    disputes, 
+    adjustmentItems,
+    final_amount: bill.final_amount || bill.total_amount
+  });
 };
 
 const getMyBills = (req, res) => {
@@ -198,9 +276,13 @@ const getMyBills = (req, res) => {
   
   let sql = `
     SELECT b.*,
-           COUNT(bi.id) as item_count
+           COUNT(bi.id) as item_count,
+           bd.id as dispute_id,
+           bd.status as dispute_status_info,
+           bd.reason as dispute_reason
     FROM bills b
     LEFT JOIN bill_items bi ON b.id = bi.bill_id
+    LEFT JOIN bill_disputes bd ON b.id = bd.bill_id AND bd.status IN ('pending', 'approved', 'adjusted')
     WHERE b.merchant_id = ?
   `;
   const params = [req.user.id];
@@ -268,6 +350,7 @@ const generateMonthlyBills = (req, res) => {
         DELETE FROM bill_items 
         WHERE bill_id IN (SELECT id FROM bills WHERE billing_period = ?)
       `).run(period);
+      db.prepare(`DELETE FROM bill_disputes WHERE bill_id IN (SELECT id FROM bills WHERE billing_period = ?)`).run(period);
       db.prepare(`DELETE FROM bills WHERE billing_period = ?`).run(period);
     }
     
@@ -277,10 +360,12 @@ const generateMonthlyBills = (req, res) => {
       const billNo = generateBillNo(merchantId, period);
       let totalAmount = 0;
       
+      const firstLease = leases[0];
+      const warehouseId = firstLease.location_id ? 1 : 1;
       const billResult = db.prepare(`
-        INSERT INTO bills (bill_no, merchant_id, billing_period, total_amount, status, remarks)
-        VALUES (?, ?, ?, 0, 'pending', ?)
-      `).run(billNo, merchantId, period, `${period} 月仓储费账单`);
+        INSERT INTO bills (bill_no, merchant_id, billing_period, billing_start_date, billing_end_date, total_amount, status, remarks, warehouse_id)
+        VALUES (?, ?, ?, ?, ?, 0, 'pending', ?, ?)
+      `).run(billNo, merchantId, period, periodStart, periodEnd, `${period} 月仓储费账单`, warehouseId);
       
       const billId = billResult.lastInsertRowid;
       
@@ -288,7 +373,20 @@ const generateMonthlyBills = (req, res) => {
         const calculation = calculateLeaseAmount(lease, periodStart, periodEnd);
         
         if (calculation.amount > 0) {
-          const description = `${lease.location_code} - ${lease.category_name} ${lease.billing_method === 'daily' ? '按日' : lease.billing_method === 'monthly' ? '按月' : lease.billing_method === 'per_pallet' ? '按托盘' : '按体积'}计费`;
+          let description = `${lease.location_code} - ${lease.category_name} `;
+          if (lease.billing_method === 'daily') {
+            description += '按日计费';
+          } else if (lease.billing_method === 'monthly') {
+            description += '按月计费';
+          } else if (lease.billing_method === 'per_pallet') {
+            description += '按托盘阶梯计费';
+          } else {
+            description += '按体积阶梯计费';
+          }
+          
+          if (calculation.tierDetails && calculation.tierDetails.length > 0) {
+            description += ' (' + calculation.tierDetails.map(t => `${t.tier_from}-${t.tier_to || '∞'}:¥${t.unit_price}`).join(', ') + ')';
+          }
           
           db.prepare(`
             INSERT INTO bill_items (
@@ -306,9 +404,9 @@ const generateMonthlyBills = (req, res) => {
       
       if (totalAmount > 0) {
         db.prepare(`
-          UPDATE bills SET total_amount = ?, status = 'issued', issued_at = CURRENT_TIMESTAMP
+          UPDATE bills SET total_amount = ?, final_amount = ?, status = 'issued', issued_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(Math.round(totalAmount * 100) / 100, billId);
+        `).run(Math.round(totalAmount * 100) / 100, Math.round(totalAmount * 100) / 100, billId);
         
         results.push({
           merchantId,
@@ -349,7 +447,7 @@ const markBillPaid = (req, res) => {
     return res.status(404).json({ error: '账单不存在' });
   }
   
-  if (bill.status !== 'issued' && bill.status !== 'overdue') {
+  if (bill.status !== 'issued' && bill.status !== 'overdue' && bill.status !== 'adjusted') {
     return res.status(400).json({ error: '账单状态不允许标记为已支付' });
   }
   
@@ -410,6 +508,208 @@ const cancelBill = (req, res) => {
   res.json({ message: '账单已取消' });
 };
 
+const submitDispute = (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  
+  if (!reason || reason.trim().length === 0) {
+    return res.status(400).json({ error: '申诉理由不能为空' });
+  }
+  
+  const bill = db.prepare('SELECT * FROM bills WHERE id = ?').get(id);
+  if (!bill) {
+    return res.status(404).json({ error: '账单不存在' });
+  }
+  
+  if (req.user.role === 'merchant' && bill.merchant_id !== req.user.id) {
+    return res.status(403).json({ error: '无权对此账单发起申诉' });
+  }
+  
+  if (!['issued', 'overdue', 'adjusted'].includes(bill.status)) {
+    return res.status(400).json({ error: '当前账单状态不允许发起申诉' });
+  }
+  
+  const pendingDispute = db.prepare(`
+    SELECT id FROM bill_disputes WHERE bill_id = ? AND status = 'pending'
+  `).get(id);
+  
+  if (pendingDispute) {
+    return res.status(400).json({ error: '该账单已有待处理的申诉' });
+  }
+  
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO bill_disputes (bill_id, merchant_id, reason, status)
+      VALUES (?, ?, ?, 'pending')
+    `).run(id, bill.merchant_id, reason.trim());
+    
+    db.prepare(`
+      UPDATE bills SET dispute_status = 'pending', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+    
+    db.prepare('INSERT INTO system_logs (user_id, action, module, details) VALUES (?, ?, ?, ?)')
+      .run(req.user.id, 'submit_bill_dispute', 'billing', `对账单 ${bill.bill_no} 发起申诉`);
+  });
+  
+  try {
+    tx();
+    res.json({ message: '申诉已提交，等待管理员审核' });
+  } catch (err) {
+    res.status(500).json({ error: '申诉提交失败: ' + err.message });
+  }
+};
+
+const rejectDispute = (req, res) => {
+  const { id, disputeId } = req.params;
+  const { admin_notes } = req.body;
+  
+  const dispute = db.prepare('SELECT * FROM bill_disputes WHERE id = ? AND bill_id = ?').get(disputeId, id);
+  if (!dispute) {
+    return res.status(404).json({ error: '申诉记录不存在' });
+  }
+  
+  if (dispute.status !== 'pending') {
+    return res.status(400).json({ error: '该申诉已处理' });
+  }
+  
+  const bill = db.prepare('SELECT * FROM bills WHERE id = ?').get(id);
+  
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE bill_disputes 
+      SET status = 'rejected', admin_notes = ?, resolved_at = CURRENT_TIMESTAMP, resolved_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(admin_notes || '', req.user.id, disputeId);
+    
+    db.prepare(`
+      UPDATE bills SET dispute_status = 'rejected', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+    
+    db.prepare('INSERT INTO system_logs (user_id, action, module, details) VALUES (?, ?, ?, ?)')
+      .run(req.user.id, 'reject_bill_dispute', 'billing', `驳回账单 ${bill.bill_no} 的申诉`);
+  });
+  
+  try {
+    tx();
+    res.json({ message: '申诉已驳回' });
+  } catch (err) {
+    res.status(500).json({ error: '操作失败: ' + err.message });
+  }
+};
+
+const approveDispute = (req, res) => {
+  const { id, disputeId } = req.params;
+  const { adjustment_amount, admin_notes } = req.body;
+  
+  if (!adjustment_amount || isNaN(adjustment_amount) || adjustment_amount <= 0) {
+    return res.status(400).json({ error: '请输入有效的调整金额' });
+  }
+  
+  const dispute = db.prepare('SELECT * FROM bill_disputes WHERE id = ? AND bill_id = ?').get(disputeId, id);
+  if (!dispute) {
+    return res.status(404).json({ error: '申诉记录不存在' });
+  }
+  
+  if (dispute.status !== 'pending') {
+    return res.status(400).json({ error: '该申诉已处理' });
+  }
+  
+  const bill = db.prepare('SELECT * FROM bills WHERE id = ?').get(id);
+  const finalAmount = Math.round((bill.total_amount - adjustment_amount) * 100) / 100;
+  
+  if (finalAmount < 0) {
+    return res.status(400).json({ error: '调整金额不能大于账单总金额' });
+  }
+  
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE bill_disputes 
+      SET status = 'adjusted', admin_notes = ?, adjustment_amount = ?, resolved_at = CURRENT_TIMESTAMP, resolved_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(admin_notes || '', adjustment_amount, req.user.id, disputeId);
+    
+    db.prepare(`
+      INSERT INTO bill_items (bill_id, billing_method, description, unit_price, quantity, unit, amount)
+      VALUES (?, 'adjustment', ?, 0, 0, '项', ?)
+    `).run(id, `争议调整 - ${admin_notes || '管理员审核调整'}`, -adjustment_amount);
+    
+    db.prepare(`
+      UPDATE bills SET 
+        status = 'adjusted', 
+        dispute_status = 'adjusted', 
+        adjusted_amount = ?, 
+        final_amount = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(adjustment_amount, finalAmount, id);
+    
+    db.prepare('INSERT INTO system_logs (user_id, action, module, details) VALUES (?, ?, ?, ?)')
+      .run(req.user.id, 'approve_bill_dispute', 'billing', `批准账单 ${bill.bill_no} 的申诉，调整金额 ¥${adjustment_amount}`);
+  });
+  
+  try {
+    tx();
+    res.json({ 
+      message: '申诉已通过，已生成调整明细', 
+      final_amount: finalAmount,
+      adjustment_amount: adjustment_amount
+    });
+  } catch (err) {
+    res.status(500).json({ error: '操作失败: ' + err.message });
+  }
+};
+
+const getBillingTiersHandler = (req, res) => {
+  const { method } = req.query;
+  let sql = 'SELECT * FROM billing_tiers';
+  const params = [];
+  
+  if (method) {
+    sql += ' WHERE billing_method = ?';
+    params.push(method);
+  }
+  
+  sql += ' ORDER BY billing_method, tier_from';
+  const tiers = db.prepare(sql).all(...params);
+  res.json(tiers);
+};
+
+const saveBillingTiers = (req, res) => {
+  const { tiers } = req.body;
+  
+  if (!Array.isArray(tiers)) {
+    return res.status(400).json({ error: '无效的阶梯价格数据' });
+  }
+  
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM billing_tiers').run();
+    
+    const insert = db.prepare(`
+      INSERT INTO billing_tiers (billing_method, tier_from, tier_to, unit_price, description)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    
+    for (const tier of tiers) {
+      insert.run(
+        tier.billing_method,
+        tier.tier_from,
+        tier.tier_to || null,
+        tier.unit_price,
+        tier.description
+      );
+    }
+  });
+  
+  try {
+    tx();
+    res.json({ message: '阶梯价格已保存' });
+  } catch (err) {
+    res.status(500).json({ error: '保存失败: ' + err.message });
+  }
+};
+
 const getBillingSummary = (req, res) => {
   const { year, month } = req.query;
   
@@ -421,9 +721,10 @@ const getBillingSummary = (req, res) => {
       SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid_bills,
       SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) as overdue_bills,
       SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled_bills,
+      SUM(CASE WHEN status = 'adjusted' THEN 1 ELSE 0 END) as adjusted_bills,
       SUM(CASE WHEN status IN ('issued', 'overdue') THEN total_amount ELSE 0 END) as receivable_amount,
-      SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as received_amount,
-      SUM(total_amount) as total_amount
+      SUM(CASE WHEN status = 'paid' THEN COALESCE(final_amount, total_amount) ELSE 0 END) as received_amount,
+      SUM(COALESCE(final_amount, total_amount)) as total_amount
     FROM bills
   `;
   const params = [];
@@ -441,9 +742,9 @@ const getBillingSummary = (req, res) => {
       u.name,
       u.company_name,
       COUNT(b.id) as bill_count,
-      SUM(CASE WHEN b.status = 'paid' THEN b.total_amount ELSE 0 END) as paid_amount,
-      SUM(CASE WHEN b.status IN ('issued', 'overdue') THEN b.total_amount ELSE 0 END) as unpaid_amount,
-      SUM(b.total_amount) as total_amount
+      SUM(CASE WHEN b.status = 'paid' THEN COALESCE(b.final_amount, b.total_amount) ELSE 0 END) as paid_amount,
+      SUM(CASE WHEN b.status IN ('issued', 'overdue') THEN COALESCE(b.final_amount, b.total_amount) ELSE 0 END) as unpaid_amount,
+      SUM(COALESCE(b.final_amount, b.total_amount)) as total_amount
     FROM users u
     LEFT JOIN bills b ON u.id = b.merchant_id
     WHERE u.role = 'merchant'
@@ -470,5 +771,10 @@ module.exports = {
   markBillPaid,
   markBillOverdue,
   cancelBill,
+  submitDispute,
+  rejectDispute,
+  approveDispute,
+  getBillingTiersHandler,
+  saveBillingTiers,
   getBillingSummary
 };

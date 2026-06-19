@@ -113,10 +113,15 @@ export const transferAPI = {
 export const billAPI = {
   getAll: (params) => api.get("/bills", { params }),
   getById: (id) => api.get(`/bills/${id}`),
-  getMyBills: () => api.get("/bills/merchant/my"),
+  getMyBills: (params) => api.get("/bills/merchant/my", { params }),
   getSummary: (params) => api.get("/bills/summary", { params }),
   generateMonthly: (data) => api.post("/bills/generate-monthly", data),
   markPaid: (id) => api.put(`/bills/${id}/paid`),
   markOverdue: (id) => api.put(`/bills/${id}/overdue`),
   cancel: (id) => api.put(`/bills/${id}/cancel`),
+  createDispute: (id, data) => api.post(`/bills/${id}/dispute`, data),
+  getAllDisputes: (params) => api.get("/bills/disputes", { params }),
+  getMyDisputes: () => api.get("/bills/disputes/my"),
+  rejectDispute: (id, data) => api.put(`/bills/disputes/${id}/reject`, data),
+  approveDispute: (id, data) => api.put(`/bills/disputes/${id}/approve`, data),
 };

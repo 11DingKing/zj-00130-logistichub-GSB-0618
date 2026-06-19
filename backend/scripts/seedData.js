@@ -112,27 +112,27 @@ const seedData = () => {
       { merchantId: 2, locationId: 1, categoryId: 1, agreedCapacity: 30, billingMethod: 'monthly', unitPrice: 100, startDate: moment().subtract(60, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 2, locationId: 2, categoryId: 2, agreedCapacity: 25, billingMethod: 'monthly', unitPrice: 100, startDate: moment().subtract(50, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 2, locationId: 49, categoryId: 4, agreedCapacity: 40, billingMethod: 'per_volume', unitPrice: 5, startDate: moment().subtract(45, 'days').format('YYYY-MM-DD'), status: 'active' },
-      { merchantId: 2, locationId: 50, categoryId: 5, agreedCapacity: 100, billingMethod: 'per_volume', unitPrice: 8, startDate: moment().subtract(40, 'days').format('YYYY-MM-DD'), status: 'active' },
+      { merchantId: 2, locationId: 50, categoryId: 5, agreedCapacity: 100, billingMethod: 'per_volume', unitPrice: 8, startDate: moment().subtract(40, 'days').format('YYYY-MM-DD'), status: 'active', priceTiers: JSON.stringify([{min:0,max:50,price:10},{min:51,max:200,price:7},{min:201,price:5}]) },
       { merchantId: 2, locationId: 97, categoryId: 6, agreedCapacity: 60, billingMethod: 'per_volume', unitPrice: 10, startDate: moment().subtract(35, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 3, locationId: 10, categoryId: 13, agreedCapacity: 200, billingMethod: 'daily', unitPrice: 0.5, startDate: moment().subtract(70, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 3, locationId: 11, categoryId: 13, agreedCapacity: 200, billingMethod: 'daily', unitPrice: 0.5, startDate: moment().subtract(70, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 4, locationId: 5, categoryId: 8, agreedCapacity: 50, billingMethod: 'monthly', unitPrice: 120, startDate: moment().subtract(55, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 4, locationId: 51, categoryId: 9, agreedCapacity: 30, billingMethod: 'per_volume', unitPrice: 15, startDate: moment().subtract(55, 'days').format('YYYY-MM-DD'), status: 'active' },
-      { merchantId: 5, locationId: 53, categoryId: 10, agreedCapacity: 100, billingMethod: 'per_pallet', unitPrice: 50, startDate: moment().subtract(65, 'days').format('YYYY-MM-DD'), status: 'active' },
+      { merchantId: 5, locationId: 53, categoryId: 10, agreedCapacity: 100, billingMethod: 'per_pallet', unitPrice: 50, startDate: moment().subtract(65, 'days').format('YYYY-MM-DD'), status: 'active', priceTiers: JSON.stringify([{min:0,max:50,price:60},{min:51,max:100,price:45},{min:101,price:35}]) },
       { merchantId: 5, locationId: 54, categoryId: 11, agreedCapacity: 40, billingMethod: 'per_pallet', unitPrice: 80, startDate: moment().subtract(65, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 5, locationId: 6, categoryId: 12, agreedCapacity: 150, billingMethod: 'monthly', unitPrice: 90, startDate: moment().subtract(60, 'days').format('YYYY-MM-DD'), status: 'active' },
       { merchantId: 2, locationId: 3, categoryId: 3, agreedCapacity: 45, billingMethod: 'monthly', unitPrice: 100, startDate: moment().subtract(10, 'days').format('YYYY-MM-DD'), status: 'pending' }
     ];
 
     const leaseStmt = db.prepare(`
-      INSERT INTO leases (merchant_id, location_id, category_id, agreed_capacity, billing_method, unit_price, start_date, status, approved_at, approved_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO leases (merchant_id, location_id, category_id, agreed_capacity, billing_method, unit_price, price_tiers, start_date, status, approved_at, approved_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     leases.forEach(l => {
       const approvedAt = l.status === 'active' ? moment().subtract(59, 'days').format('YYYY-MM-DD HH:mm:ss') : null;
       const approvedBy = l.status === 'active' ? 1 : null;
-      leaseStmt.run(l.merchantId, l.locationId, l.categoryId, l.agreedCapacity, l.billingMethod, l.unitPrice, l.startDate, l.status, approvedAt, approvedBy);
+      leaseStmt.run(l.merchantId, l.locationId, l.categoryId, l.agreedCapacity, l.billingMethod, l.unitPrice, l.priceTiers || null, l.startDate, l.status, approvedAt, approvedBy);
     });
     console.log('✅ 租约数据填充完成');
 
@@ -231,9 +231,15 @@ const seedData = () => {
     `);
 
     const txnStmt = db.prepare(`
-      INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, batch_id, quantity, unit, operator_id, remarks, txn_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, batch_id, lease_id, quantity, unit, operator_id, remarks, txn_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+
+    const getBatchLeaseId = (batchId) => {
+      if (!batchId) return null;
+      const row = db.prepare('SELECT lease_id FROM inventory_batches WHERE id = ?').get(batchId);
+      return row ? row.lease_id : null;
+    };
 
     inboundOrders.forEach((order, idx) => {
       const orderNo = generateOrderNo('IN');
@@ -250,14 +256,14 @@ const seedData = () => {
       if (idx === 0) {
         inboundItemStmt.run(orderId, 1, generateBatchNo(order.arrivalDate), 25, 25, '袋', null, moment().add(300, 'days').format('YYYY-MM-DD'), 1, 'completed', completedAt);
         if (order.status === 'completed') {
-          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 1, 25, '袋', 1, '入库大米25袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
+          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 1, getBatchLeaseId(1), 25, '袋', 1, '入库大米25袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
         }
       } else if (idx === 1) {
         inboundItemStmt.run(orderId, 2, generateBatchNo(order.arrivalDate), 20, 20, '袋', null, moment().add(120, 'days').format('YYYY-MM-DD'), 2, 'completed', completedAt);
         inboundItemStmt.run(orderId, 1, generateBatchNo(order.arrivalDate.clone().add(30, 'days')), 15, 15, '袋', null, moment().add(330, 'days').format('YYYY-MM-DD'), 1, 'completed', completedAt);
         if (order.status === 'completed') {
-          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 2, 2, 3, 20, '袋', 1, '入库面粉20袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
-          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 2, 15, '袋', 1, '入库大米15袋', order.arrivalDate.clone().add(25, 'days').format('YYYY-MM-DD HH:mm:ss'));
+          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 2, 2, 3, getBatchLeaseId(3), 20, '袋', 1, '入库面粉20袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
+          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 2, getBatchLeaseId(2), 15, '袋', 1, '入库大米15袋', order.arrivalDate.clone().add(25, 'days').format('YYYY-MM-DD HH:mm:ss'));
         }
       } else if (idx === 2) {
         inboundItemStmt.run(orderId, 4, generateBatchNo(order.arrivalDate), 30, 30, '箱', null, moment().add(7, 'days').format('YYYY-MM-DD'), 49, 'completed', completedAt);
@@ -324,7 +330,7 @@ const seedData = () => {
 
         if (order.status === 'completed') {
           txnStmt.run(generateTxnNo(), 'outbound', orderId, orderNo, order.merchantId, order.warehouseId,
-            [1, 2, 10, 54, 49, 10][idx] || 1, categoryId, batchId, order.totalQty, unit, 1,
+            [1, 2, 10, 54, 49, 10][idx] || 1, categoryId, batchId, getBatchLeaseId(batchId), order.totalQty, unit, 1,
             `出库${categories[categoryId - 1].name}${order.totalQty}${unit}`,
             order.deliveryDate.format('YYYY-MM-DD HH:mm:ss'));
         }
@@ -354,6 +360,7 @@ const seedData = () => {
       
       txnStmt.run(generateTxnNo(), t.type, 100 + Math.floor(Math.random() * 100), refNo,
         t.merchantId, t.warehouseId, t.locationId, t.categoryId, t.batchId || null,
+        getBatchLeaseId(t.batchId),
         t.qty, t.unit, 1, `${t.type === 'inbound' ? '入库' : t.type === 'outbound' ? '出库' : t.type === 'transfer' ? '移库' : '调整'}${categories[t.categoryId - 1].name}${t.qty}${t.unit}`,
         t.date.format('YYYY-MM-DD HH:mm:ss'));
     });

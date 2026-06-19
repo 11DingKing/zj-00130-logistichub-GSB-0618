@@ -577,9 +577,9 @@ const completeTransfer = (req, res) => {
       `
       INSERT INTO transactions (
         txn_no, txn_type, reference_id, reference_no, merchant_id,
-        warehouse_id, location_id, category_id, batch_id, quantity,
+        warehouse_id, location_id, category_id, batch_id, lease_id, quantity,
         unit, operator_id, remarks
-      ) VALUES (?, 'transfer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, 'transfer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     ).run(
       txnNo,
@@ -590,6 +590,7 @@ const completeTransfer = (req, res) => {
       transfer.from_location_id,
       batch.category_id,
       transfer.batch_id,
+      batch.lease_id,
       -transfer.quantity,
       transfer.unit,
       req.user.id,
@@ -600,9 +601,9 @@ const completeTransfer = (req, res) => {
       `
       INSERT INTO transactions (
         txn_no, txn_type, reference_id, reference_no, merchant_id,
-        warehouse_id, location_id, category_id, batch_id, quantity,
+        warehouse_id, location_id, category_id, batch_id, lease_id, quantity,
         unit, operator_id, remarks
-      ) VALUES (?, 'transfer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, 'transfer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     ).run(
       txnNo,
@@ -613,6 +614,7 @@ const completeTransfer = (req, res) => {
       transfer.to_location_id,
       batch.category_id,
       transfer.batch_id,
+      batch.lease_id,
       transfer.quantity,
       transfer.unit,
       req.user.id,

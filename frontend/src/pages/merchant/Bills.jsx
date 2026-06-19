@@ -1,38 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Tag, Space, Select, Button, Modal, message, Typography, Descriptions, Row, Col, Statistic, Table as AntTable } from 'antd';
+import { Card, Table, Tag, Space, Select, Button, Modal, Form, Input, message, Typography, Descriptions, Row, Col, Statistic, Table as AntTable, Timeline, Alert } from 'antd';
 import { 
-  DollarOutlined, 
   EyeOutlined,
   FileTextOutlined,
-  ExclamationCircleOutlined
+  ExclamationCircleOutlined,
+  QuestionCircleOutlined
 } from '@ant-design/icons';
 import { billAPI, statsAPI } from '../../services/apiEndpoints';
 import { useRequest } from '../../hooks/useRequest';
+import { BILL_STATUS_MAP, DISPUTE_STATUS_MAP, BILLING_METHOD_MAP } from '../../utils/constants';
 import dayjs from 'dayjs';
 import ReactECharts from 'echarts-for-react';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
-
-const BILL_STATUS_MAP = {
-  pending: { text: '待生成', color: 'default' },
-  issued: { text: '已出单', color: 'blue' },
-  paid: { text: '已支付', color: 'green' },
-  overdue: { text: '已逾期', color: 'red' },
-  cancelled: { text: '已取消', color: 'default' }
-};
-
-const BILLING_METHOD_MAP = {
-  daily: '按日计费',
-  monthly: '按月计费',
-  per_pallet: '按托盘计费',
-  per_volume: '按体积计费'
-};
+const { TextArea } = Input;
 
 const MerchantBills = () => {
   const [filters, setFilters] = useState({ status: '', billingPeriod: '' });
   const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [disputeModalVisible, setDisputeModalVisible] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
+  const [disputeForm] = Form.useForm();
 
   const { data: bills, loading, run: fetchBills } = useRequest(
     () => billAPI.getMyBills(filters)
@@ -59,6 +48,28 @@ const MerchantBills = () => {
     } catch (err) {
       message.error('获取账单详情失败');
     }
+  };
+
+  const handleOpenDispute = () => {
+    setDisputeModalVisible(true);
+  };
+
+  const handleSubmitDispute = async () => {
+    try {
+      const values = await disputeForm.validateFields();
+      await billAPI.createDispute(selectedBill.id, { reason: values.reason });
+      message.success('申诉已提交，等待管理员审核');
+      setDisputeModalVisible(false);
+      disputeForm.resetFields();
+      setDetailModalVisible(false);
+      fetchBills();
+    } catch (err) {
+      message.error(err.response?.data?.error || '申诉提交失败');
+    }
+  };
+
+  const canDispute = (bill) => {
+    return ['issued', 'overdue'].includes(bill.status) && bill.dispute_status !== 'pending';
   };
 
   const getChartOption = () => {
@@ -123,9 +134,16 @@ const MerchantBills = () => {
       title: '状态',
       dataIndex: 'status',
       width: 100,
-      render: (val) => {
+      render: (val, record) => {
         const status = BILL_STATUS_MAP[val];
-        return <Tag color={status.color}>{status.text}</Tag>;
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color={status.color}>{status.text}</Tag>
+            {record.dispute_status && record.dispute_status === 'pending' && (
+              <Tag color="orange" style={{ fontSize: 11 }}>申诉审核中</Tag>
+            )}
+          </Space>
+        );
       }
     },
     {
@@ -172,37 +190,79 @@ const MerchantBills = () => {
     {
       title: '计费方式',
       dataIndex: 'billing_method',
-      width: 100,
-      render: (val) => BILLING_METHOD_MAP[val]
+      width: 110,
+      render: (val, record) => {
+        if (record.is_adjustment) return <Tag color="purple">争议调整</Tag>;
+        return BILLING_METHOD_MAP[val];
+      }
     },
     {
       title: '单价',
       dataIndex: 'unit_price',
       width: 100,
-      render: (val, record) => `¥${val.toFixed(2)}/${record.billing_method === 'monthly' ? '月' : record.billing_method === 'daily' ? '天' : record.category_unit || '单位'}`
+      render: (val, record) => {
+        if (record.is_adjustment) return '-';
+        return `¥${val.toFixed(2)}/${record.billing_method === 'monthly' ? '月' : record.billing_method === 'daily' ? '天' : record.category_unit || '单位'}`;
+      }
     },
     {
       title: '数量',
       dataIndex: 'quantity',
       width: 100,
-      render: (val, record) => `${val} ${record.category_unit || ''}`
+      render: (val, record) => record.is_adjustment ? '-' : `${val} ${record.category_unit || ''}`
     },
     {
       title: '天数',
       dataIndex: 'days',
-      width: 80
+      width: 80,
+      render: (val, record) => record.is_adjustment ? '-' : val
     },
     {
       title: '金额',
       dataIndex: 'amount',
       width: 100,
-      render: (val) => <Text strong>¥{val.toFixed(2)}</Text>
+      render: (val, record) => (
+        <Text strong style={{ color: record.is_adjustment && val < 0 ? '#52c41a' : '#f5222d' }}>
+          {record.is_adjustment && val < 0 ? '' : ''}¥{val.toFixed(2)}
+        </Text>
+      )
     },
     {
       title: '说明',
-      dataIndex: 'description'
+      dataIndex: 'description',
+      render: (val, record) => {
+        if (record.is_adjustment) {
+          return <Tag color="purple">红字调整</Tag>;
+        }
+        return val;
+      }
     }
   ];
+
+  const parseTierDetails = (tierDetailsStr) => {
+    if (!tierDetailsStr) return null;
+    try {
+      return JSON.parse(tierDetailsStr);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const renderTierBreakdown = (tierDetails) => {
+    if (!tierDetails) return null;
+    const tiers = parseTierDetails(tierDetails);
+    if (!tiers || tiers.length === 0) return null;
+    
+    return (
+      <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
+        {tiers.map((t, i) => (
+          <div key={i}>
+            阶梯{t.tierIndex + 1}: {t.min}-{t.max != null ? t.max : '以上'} @ ¥{t.price}/单位/天 × {t.quantityInTier} × {t.days}天 = ¥{Number(t.amount).toFixed(2)}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -324,16 +384,21 @@ const MerchantBills = () => {
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
         footer={null}
-        width={900}
+        width={950}
       >
         {selectedBill && (
           <div>
             <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
               <Descriptions.Item label="账单编号">{selectedBill.bill_no}</Descriptions.Item>
               <Descriptions.Item label="状态">
-                <Tag color={BILL_STATUS_MAP[selectedBill.status].color}>
-                  {BILL_STATUS_MAP[selectedBill.status].text}
-                </Tag>
+                <Space>
+                  <Tag color={BILL_STATUS_MAP[selectedBill.status].color}>
+                    {BILL_STATUS_MAP[selectedBill.status].text}
+                  </Tag>
+                  {selectedBill.disputes?.some(d => d.status === 'pending') && (
+                    <Tag color="orange">申诉处理中</Tag>
+                  )}
+                </Space>
               </Descriptions.Item>
               <Descriptions.Item label="账期">{selectedBill.billing_period}</Descriptions.Item>
               <Descriptions.Item label="总金额">
@@ -347,6 +412,11 @@ const MerchantBills = () => {
               <Descriptions.Item label="支付时间">
                 {selectedBill.paid_at ? dayjs(selectedBill.paid_at).format('YYYY-MM-DD HH:mm') : '-'}
               </Descriptions.Item>
+              {selectedBill.adjusted_at && (
+                <Descriptions.Item label="调整时间" span={2}>
+                  {dayjs(selectedBill.adjusted_at).format('YYYY-MM-DD HH:mm')}
+                </Descriptions.Item>
+              )}
               {selectedBill.remarks && (
                 <Descriptions.Item label="备注" span={2}>
                   {selectedBill.remarks}
@@ -361,6 +431,10 @@ const MerchantBills = () => {
                 rowKey="id"
                 size="small"
                 pagination={false}
+                expandable={{
+                  expandedRowRender: (record) => renderTierBreakdown(record.tier_details),
+                  rowExpandable: (record) => !!record.tier_details
+                }}
                 summary={(pageData) => {
                   let totalAmount = 0;
                   pageData.forEach(({ amount }) => {
@@ -383,6 +457,33 @@ const MerchantBills = () => {
               />
             </Card>
 
+            {selectedBill.disputes && selectedBill.disputes.length > 0 && (
+              <Card size="small" title="争议记录" style={{ marginBottom: 16 }}>
+                <Timeline
+                  items={selectedBill.disputes.map(d => ({
+                    color: d.status === 'pending' ? 'orange' : d.status === 'rejected' ? 'red' : 'purple',
+                    children: (
+                      <div>
+                        <Space>
+                          <Text strong>{DISPUTE_STATUS_MAP[d.status].text}</Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {dayjs(d.created_at).format('YYYY-MM-DD HH:mm')}
+                          </Text>
+                        </Space>
+                        <div style={{ marginTop: 4 }}>申诉理由：{d.reason}</div>
+                        {d.admin_notes && (
+                          <div style={{ marginTop: 4, color: '#595959' }}>
+                            管理员回复：{d.admin_notes}
+                            {d.adjustment_amount ? `（调整金额: ¥${d.adjustment_amount.toFixed(2)}）` : ''}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }))}
+                />
+              </Card>
+            )}
+
             {(selectedBill.status === 'issued' || selectedBill.status === 'overdue') && (
               <Card
                 size="small"
@@ -398,11 +499,48 @@ const MerchantBills = () => {
 
             <div style={{ marginTop: 16, textAlign: 'right' }}>
               <Space>
+                {canDispute(selectedBill) && (
+                  <Button
+                    icon={<QuestionCircleOutlined />}
+                    onClick={handleOpenDispute}
+                  >
+                    发起申诉
+                  </Button>
+                )}
                 <Button onClick={() => setDetailModalVisible(false)}>关闭</Button>
               </Space>
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title="发起账单申诉"
+        open={disputeModalVisible}
+        onOk={handleSubmitDispute}
+        onCancel={() => {
+          setDisputeModalVisible(false);
+          disputeForm.resetFields();
+        }}
+        okText="提交申诉"
+        cancelText="取消"
+      >
+        <Alert
+          message="申诉说明"
+          description="请详细描述您对账单有疑问的地方，管理员将在1-3个工作日内审核处理。如申诉成立，将生成红字调整单。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={disputeForm} layout="vertical">
+          <Form.Item
+            name="reason"
+            label="申诉理由"
+            rules={[{ required: true, message: '请填写申诉理由', min: 5 }]}
+          >
+            <TextArea rows={4} placeholder="请详细描述账单争议点..." maxLength={500} showCount />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

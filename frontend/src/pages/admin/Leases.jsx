@@ -18,6 +18,8 @@ import {
   Descriptions,
   List,
   Alert,
+  Divider,
+  Popconfirm,
 } from "antd";
 import {
   FileTextOutlined,
@@ -26,6 +28,9 @@ import {
   CheckOutlined,
   StopOutlined,
   PlusOutlined,
+  EditOutlined,
+  MinusCircleOutlined,
+  PlusCircleOutlined,
 } from "@ant-design/icons";
 import { leaseAPI, locationAPI } from "../../services/apiEndpoints";
 import { useRequest } from "../../hooks/useRequest";
@@ -45,7 +50,9 @@ const AdminLeases = () => {
   const [selectedLease, setSelectedLease] = useState(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [tierModalVisible, setTierModalVisible] = useState(false);
   const [form] = Form.useForm();
+  const [tierForm] = Form.useForm();
 
   const {
     data: leases,
@@ -96,8 +103,10 @@ const AdminLeases = () => {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+      const priceTiers = values.tiers?.filter(t => t.min !== undefined && t.price !== undefined) || [];
       await leaseAPI.create({
         ...values,
+        priceTiers: priceTiers.length > 0 ? priceTiers : null,
         startDate: values.startDate?.format("YYYY-MM-DD"),
         endDate: values.endDate?.format("YYYY-MM-DD"),
       });
@@ -107,6 +116,28 @@ const AdminLeases = () => {
       fetchLeases();
     } catch (err) {
       message.error(err.response?.data?.error || "创建失败");
+    }
+  };
+
+  const handleOpenTierConfig = () => {
+    tierForm.setFieldsValue({
+      tiers: selectedLease.priceTiers || [{ min: 0, max: 100, price: selectedLease.unit_price }]
+    });
+    setTierModalVisible(true);
+  };
+
+  const handleSaveTiers = async () => {
+    try {
+      const values = await tierForm.validateFields();
+      const validTiers = (values.tiers || []).filter(t => t.min !== undefined && t.price !== undefined);
+      await leaseAPI.update(selectedLease.id, { priceTiers: validTiers });
+      message.success("阶梯价格已保存");
+      setTierModalVisible(false);
+      const response = await leaseAPI.getById(selectedLease.id);
+      setSelectedLease(response.data);
+      fetchLeases();
+    } catch (err) {
+      message.error(err.response?.data?.error || "保存失败");
     }
   };
 
@@ -145,15 +176,23 @@ const AdminLeases = () => {
     {
       title: "计费方式",
       dataIndex: "billing_method",
-      width: 100,
-      render: (v) => BILLING_METHOD_MAP[v] || v,
+      width: 110,
+      render: (v, r) => (
+        <Space direction="vertical" size={0}>
+          <span>{BILLING_METHOD_MAP[v] || v}</span>
+          {r.price_tiers && <Tag color="purple" style={{ fontSize: 10 }}>阶梯价</Tag>}
+        </Space>
+      ),
     },
     {
       title: "单价",
       dataIndex: "unit_price",
-      width: 100,
-      render: (v, r) =>
-        `${formatCurrency(v)}/${r.billing_method === "daily" ? "天" : r.billing_method === "monthly" ? "月" : r.billing_method === "per_pallet" ? "托" : "m³"}`,
+      width: 120,
+      render: (v, r) => (
+        <Space direction="vertical" size={0}>
+          <span>{formatCurrency(v)}/{r.billing_method === "daily" ? "天" : r.billing_method === "monthly" ? "月" : r.billing_method === "per_pallet" ? "托" : "m³"}</span>
+        </Space>
+      ),
     },
     {
       title: "租期",
@@ -173,9 +212,9 @@ const AdminLeases = () => {
     {
       title: "操作",
       key: "action",
-      width: 180,
+      width: 200,
       render: (_, r) => (
-        <Space>
+        <Space wrap>
           <Button
             type="link"
             size="small"
@@ -195,20 +234,36 @@ const AdminLeases = () => {
             </Button>
           )}
           {r.status === "active" && (
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<StopOutlined />}
-              onClick={() => handleTerminate(r.id)}
-            >
-              终止
-            </Button>
+            <>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => {
+                  handleViewLease(r.id);
+                  setTimeout(() => handleOpenTierConfig(), 300);
+                }}
+              >
+                阶梯价
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                danger
+                icon={<StopOutlined />}
+                onClick={() => handleTerminate(r.id)}
+              >
+                终止
+              </Button>
+            </>
           )}
         </Space>
       ),
     },
   ];
+
+  const billingMethodWatch = Form.useWatch("billingMethod", form);
+  const showTierConfigInCreate = billingMethodWatch === "per_pallet" || billingMethodWatch === "per_volume";
 
   return (
     <div>
@@ -264,6 +319,7 @@ const AdminLeases = () => {
           dataSource={leases}
           loading={loading}
           rowKey="id"
+          scroll={{ x: 1500 }}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
@@ -276,8 +332,17 @@ const AdminLeases = () => {
         title="租约详情"
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
-        footer={null}
-        width={800}
+        footer={
+          selectedLease?.status === "active" ? (
+            <Space>
+              <Button icon={<EditOutlined />} onClick={handleOpenTierConfig}>
+                配置阶梯价格
+              </Button>
+              <Button onClick={() => setDetailModalVisible(false)}>关闭</Button>
+            </Space>
+          ) : null
+        }
+        width={850}
       >
         {selectedLease && (
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -317,7 +382,7 @@ const AdminLeases = () => {
               <Descriptions.Item label="计费方式">
                 {BILLING_METHOD_MAP[selectedLease.billing_method]}
               </Descriptions.Item>
-              <Descriptions.Item label="单价">
+              <Descriptions.Item label="基础单价">
                 {formatCurrency(selectedLease.unit_price)}
               </Descriptions.Item>
               <Descriptions.Item label="开始日期">
@@ -327,6 +392,23 @@ const AdminLeases = () => {
                 {selectedLease.end_date || "长期"}
               </Descriptions.Item>
             </Descriptions>
+
+            {selectedLease.priceTiers && selectedLease.priceTiers.length > 0 && (
+              <Card size="small" title="阶梯价格配置" type="inner">
+                <Table
+                  size="small"
+                  pagination={false}
+                  rowKey={(r, i) => i}
+                  dataSource={selectedLease.priceTiers}
+                  columns={[
+                    { title: '档位', render: (_, r, i) => `第 ${i + 1} 档` },
+                    { title: '起始量', dataIndex: 'min' },
+                    { title: '上限', dataIndex: 'max', render: v => v || '以上' },
+                    { title: '单价 (元)', dataIndex: 'price', render: v => `¥${Number(v).toFixed(2)}` },
+                  ]}
+                />
+              </Card>
+            )}
 
             {selectedLease.inventory?.length > 0 && (
               <Card title="当前库存" size="small" type="inner">
@@ -360,6 +442,65 @@ const AdminLeases = () => {
       </Modal>
 
       <Modal
+        title="配置阶梯价格"
+        open={tierModalVisible}
+        onOk={handleSaveTiers}
+        onCancel={() => setTierModalVisible(false)}
+        okText="保存"
+        cancelText="取消"
+        width={600}
+      >
+        <Alert
+          message="累进计费说明"
+          description="阶梯计价按累计平均使用量分档计费，每档只对超出部分使用该档单价（类似个税累进计算）。最后一档上限留空表示不限。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={tierForm} layout="vertical">
+          <Form.List name="tiers">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map((field, index) => (
+                  <Space key={field.key} align="baseline" style={{ display: 'flex', marginBottom: 8 }}>
+                    <Form.Item
+                      {...field}
+                      label={index === 0 ? '档位' : ''}
+                      name={[field.name, 'min']}
+                      rules={[{ required: true, message: '必填' }]}
+                    >
+                      <InputNumber min={0} placeholder="起始量" style={{ width: 100 }} addonBefore="≥" />
+                    </Form.Item>
+                    <span>-</span>
+                    <Form.Item
+                      {...field}
+                      name={[field.name, 'max']}
+                    >
+                      <InputNumber min={0} placeholder="上限" style={{ width: 100 }} addonBefore="≤" />
+                    </Form.Item>
+                    <Form.Item
+                      {...field}
+                      label={index === 0 ? '单价 (元)' : ''}
+                      name={[field.name, 'price']}
+                      rules={[{ required: true, message: '必填' }]}
+                    >
+                      <InputNumber min={0} step={0.01} style={{ width: 130 }} addonBefore="¥" placeholder="单价" />
+                    </Form.Item>
+                    {fields.length > 1 && (
+                      <MinusCircleOutlined onClick={() => remove(field.name)} style={{ color: '#ff4d4f' }} />
+                    )}
+                  </Space>
+                ))}
+                <Button type="dashed" onClick={() => add({ min: 0, price: 0 })} block icon={<PlusCircleOutlined />}>
+                  添加档位
+                </Button>
+              </>
+            )}
+          </Form.List>
+        </Form>
+      </Modal>
+
+      <Modal
         title="新建租约"
         open={createModalVisible}
         onOk={handleCreate}
@@ -368,7 +509,7 @@ const AdminLeases = () => {
           form.resetFields();
         }}
         okText="创建"
-        width={600}
+        width={650}
       >
         <Form form={form} layout="vertical">
           <Row gutter={16}>
@@ -447,14 +588,67 @@ const AdminLeases = () => {
             <Col span={12}>
               <Form.Item
                 name="unitPrice"
-                label="单价 (元)"
+                label="基础单价 (元)"
                 rules={[{ required: true, message: "请输入单价" }]}
               >
                 <InputNumber min={0} step={0.01} style={{ width: "100%" }} />
               </Form.Item>
             </Col>
           </Row>
-          <Row gutter={16}>
+
+          {showTierConfigInCreate && (
+            <>
+              <Divider orientation="left" plain>阶梯价格配置（可选，累进计费）</Divider>
+              <Alert
+                message="提示"
+                description="不配置阶梯时按基础单价统一计费；配置后按累计使用量分档累进计费。"
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+              />
+              <Form.List name="tiers">
+                {(fields, { add, remove }) => (
+                  <>
+                    {fields.map((field, index) => (
+                      <Space key={field.key} align="baseline" style={{ display: 'flex', marginBottom: 8 }}>
+                        <Form.Item
+                          {...field}
+                          label={index === 0 ? '档位区间' : ''}
+                          name={[field.name, 'min']}
+                          rules={[{ required: true, message: '必填' }]}
+                        >
+                          <InputNumber min={0} placeholder="起始量" style={{ width: 100 }} />
+                        </Form.Item>
+                        <span>-</span>
+                        <Form.Item
+                          {...field}
+                          name={[field.name, 'max']}
+                        >
+                          <InputNumber min={0} placeholder="上限" style={{ width: 100 }} />
+                        </Form.Item>
+                        <Form.Item
+                          {...field}
+                          label={index === 0 ? '单价 (元)' : ''}
+                          name={[field.name, 'price']}
+                          rules={[{ required: true, message: '必填' }]}
+                        >
+                          <InputNumber min={0} step={0.01} style={{ width: 130 }} addonBefore="¥" />
+                        </Form.Item>
+                        {fields.length > 0 && (
+                          <MinusCircleOutlined onClick={() => remove(field.name)} style={{ color: '#ff4d4f' }} />
+                        )}
+                      </Space>
+                    ))}
+                    <Button type="dashed" onClick={() => add({ min: 0, price: 0 })} block icon={<PlusCircleOutlined />}>
+                      添加阶梯档位
+                    </Button>
+                  </>
+                )}
+              </Form.List>
+            </>
+          )}
+
+          <Row gutter={16} style={{ marginTop: 16 }}>
             <Col span={12}>
               <Form.Item
                 name="startDate"
@@ -471,7 +665,7 @@ const AdminLeases = () => {
             </Col>
           </Row>
           <Form.Item name="remarks" label="备注">
-            <Input.TextArea rows={3} />
+            <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
       </Modal>

@@ -713,10 +713,11 @@ const getMerchantBillingStats = (req, res) => {
     SELECT 
       COUNT(*) as total_bills,
       SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid_bills,
-      SUM(CASE WHEN status IN ('issued', 'overdue') THEN 1 ELSE 0 END) as unpaid_bills,
+      SUM(CASE WHEN status IN ('issued', 'overdue', 'dispute_rejected', 'adjusted') THEN 1 ELSE 0 END) as unpaid_bills,
       SUM(CASE WHEN status = 'overdue' THEN 1 ELSE 0 END) as overdue_bills,
+      SUM(CASE WHEN status = 'disputed' THEN 1 ELSE 0 END) as disputed_bills,
       SUM(CASE WHEN status = 'paid' THEN total_amount ELSE 0 END) as paid_amount,
-      SUM(CASE WHEN status IN ('issued', 'overdue') THEN total_amount ELSE 0 END) as unpaid_amount,
+      SUM(CASE WHEN status IN ('issued', 'overdue', 'dispute_rejected', 'adjusted') THEN total_amount ELSE 0 END) as unpaid_amount,
       SUM(total_amount) as total_amount
     FROM bills
     WHERE merchant_id = ? AND status != 'cancelled'

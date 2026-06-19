@@ -34,6 +34,7 @@ export const leaseAPI = {
   create: (data) => api.post("/leases", data),
   approve: (id) => api.put(`/leases/${id}/approve`),
   terminate: (id) => api.put(`/leases/${id}/terminate`),
+  savePriceTiers: (id, data) => api.put(`/leases/${id}/price-tiers`, data),
 };
 
 export const inboundAPI = {
@@ -78,6 +79,7 @@ export const statsAPI = {
     api.get("/stats/slow-moving-ratio", { params }),
   getTransactions: (params) => api.get("/stats/transactions", { params }),
   getMerchantOverview: () => api.get("/stats/merchant/overview"),
+  getMerchantBilling: () => api.get("/stats/merchant/billing"),
   getIncomeTrend: (params) => api.get("/stats/income-trend", { params }),
   getWarehouseTurnover: (params) =>
     api.get("/stats/warehouse-turnover", { params }),
@@ -113,10 +115,15 @@ export const transferAPI = {
 export const billAPI = {
   getAll: (params) => api.get("/bills", { params }),
   getById: (id) => api.get(`/bills/${id}`),
-  getMyBills: () => api.get("/bills/merchant/my"),
+  getMyBills: (params) => api.get("/bills/merchant/my", { params }),
   getSummary: (params) => api.get("/bills/summary", { params }),
   generateMonthly: (data) => api.post("/bills/generate-monthly", data),
   markPaid: (id) => api.put(`/bills/${id}/paid`),
   markOverdue: (id) => api.put(`/bills/${id}/overdue`),
   cancel: (id) => api.put(`/bills/${id}/cancel`),
+  createDispute: (id, data) => api.post(`/bills/${id}/dispute`, data),
+  getDisputes: (params) => api.get("/bills/disputes", { params }),
+  getDisputeById: (id) => api.get(`/bills/disputes/${id}`),
+  rejectDispute: (id, data) => api.put(`/bills/disputes/${id}/reject`, data),
+  adjustDispute: (id, data) => api.put(`/bills/disputes/${id}/adjust`, data),
 };

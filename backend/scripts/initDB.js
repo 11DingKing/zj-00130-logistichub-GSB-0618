@@ -208,6 +208,7 @@ const initDB = () => {
       location_id INTEGER,
       category_id INTEGER,
       batch_id INTEGER,
+      lease_id INTEGER,
       quantity REAL NOT NULL,
       unit TEXT,
       operator_id INTEGER,

@@ -543,8 +543,8 @@ const confirmPick = (req, res) => {
       const txnNo = generateTxnNo();
       db.prepare(
         `
-        INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, batch_id, quantity, unit, operator_id, remarks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, batch_id, lease_id, quantity, unit, operator_id, remarks)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         txnNo,
@@ -556,6 +556,7 @@ const confirmPick = (req, res) => {
         batch.location_id,
         batch.category_id,
         batch.id,
+        batch.lease_id,
         pickQty,
         oi.unit,
         req.user.id,

@@ -42,6 +42,34 @@ const migrate = () => {
     console.log("✅ bills 表添加 issued_at 列");
   }
 
+  const txnColumns = db.prepare("PRAGMA table_info(transactions)").all();
+  const txnColNames = txnColumns.map((c) => c.name);
+
+  if (!txnColNames.includes("lease_id")) {
+    db.exec(`ALTER TABLE transactions ADD COLUMN lease_id INTEGER`);
+    console.log("✅ transactions 表添加 lease_id 列");
+
+    const updated = db
+      .prepare(
+        `
+      UPDATE transactions
+      SET lease_id = (
+        SELECT ib.lease_id FROM inventory_batches ib WHERE ib.id = transactions.batch_id
+      )
+      WHERE batch_id IS NOT NULL AND lease_id IS NULL
+    `,
+      )
+      .run();
+    console.log(
+      `  ↳ 回填 ${updated.changes} 条有 batch_id 的交易记录 lease_id`,
+    );
+  }
+
+  if (!txnColNames.includes("batch_id")) {
+    db.exec(`ALTER TABLE transactions ADD COLUMN batch_id INTEGER`);
+    console.log("✅ transactions 表添加 batch_id 列（兼容旧版）");
+  }
+
   const billCreateSQL = db
     .prepare(
       "SELECT sql FROM sqlite_master WHERE type='table' AND name='bills'",

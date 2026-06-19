@@ -1,39 +1,28 @@
 import { useState, useEffect } from 'react';
-import { Card, Table, Tag, Space, Select, Button, Modal, Form, DatePicker, message, Typography, Descriptions, Row, Col, Statistic, InputNumber, Table as AntTable } from 'antd';
+import { Card, Table, Tag, Space, Select, Button, Modal, Form, DatePicker, InputNumber, message, Typography, Descriptions, Row, Col, Statistic, Input, Table as AntTable, Alert, Tabs } from 'antd';
 import { 
   DollarOutlined, 
   EyeOutlined,
   CheckCircleOutlined,
   WarningOutlined,
-  CloseOutlined,
   FileTextOutlined,
   PlusOutlined,
   ExclamationCircleOutlined,
-  DownloadOutlined
+  DisconnectOutlined,
+  CheckOutlined,
+  StopOutlined
 } from '@ant-design/icons';
 import { billAPI, userAPI, statsAPI } from '../../services/apiEndpoints';
 import { useRequest } from '../../hooks/useRequest';
+import { BILL_STATUS_MAP, DISPUTE_STATUS_MAP, BILLING_METHOD_MAP } from '../../utils/constants';
 import dayjs from 'dayjs';
 import ReactECharts from 'echarts-for-react';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { Option } = Select;
 const { MonthPicker } = DatePicker;
-
-const BILL_STATUS_MAP = {
-  pending: { text: '待生成', color: 'default' },
-  issued: { text: '已出单', color: 'blue' },
-  paid: { text: '已支付', color: 'green' },
-  overdue: { text: '已逾期', color: 'red' },
-  cancelled: { text: '已取消', color: 'default' }
-};
-
-const BILLING_METHOD_MAP = {
-  daily: '按日计费',
-  monthly: '按月计费',
-  per_pallet: '按托盘计费',
-  per_volume: '按体积计费'
-};
+const { TextArea } = Input;
+const { TabPane } = Tabs;
 
 const AdminBills = () => {
   const [filters, setFilters] = useState({ status: '', merchantId: '', billingPeriod: '' });
@@ -41,6 +30,8 @@ const AdminBills = () => {
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
   const [generateForm] = Form.useForm();
+  const [disputeActionModal, setDisputeActionModal] = useState({ visible: false, action: null, dispute: null });
+  const [disputeForm] = Form.useForm();
 
   const { data: bills, loading, run: fetchBills } = useRequest(
     () => billAPI.getAll(filters)
@@ -132,22 +123,34 @@ const AdminBills = () => {
     });
   };
 
-  const handleCancelBill = async (id) => {
-    Modal.confirm({
-      title: '确认取消账单',
-      icon: <ExclamationCircleOutlined />,
-      content: '确定要取消此账单吗？',
-      onOk: async () => {
-        try {
-          const response = await billAPI.cancel(id);
-          message.success(response.data.message);
-          fetchBills();
-          fetchSummary();
-        } catch (err) {
-          message.error(err.response?.data?.error || '取消失败');
-        }
+  const openDisputeAction = (action, dispute) => {
+    disputeForm.resetFields();
+    setDisputeActionModal({ visible: true, action, dispute });
+  };
+
+  const handleDisputeAction = async (values) => {
+    const { action, dispute } = disputeActionModal;
+    try {
+      if (action === 'reject') {
+        await billAPI.rejectDispute(selectedBill.id, dispute.id, { admin_notes: values.admin_notes });
+        message.success('申诉已驳回');
+      } else if (action === 'approve') {
+        await billAPI.approveDispute(selectedBill.id, dispute.id, { 
+          adjustment_amount: values.adjustment_amount,
+          admin_notes: values.admin_notes 
+        });
+        message.success('申诉已通过，已生成调整明细');
       }
-    });
+      setDisputeActionModal({ visible: false, action: null, dispute: null });
+      fetchBills();
+      fetchSummary();
+      if (selectedBill) {
+        const response = await billAPI.getById(selectedBill.id);
+        setSelectedBill(response.data);
+      }
+    } catch (err) {
+      message.error(err.response?.data?.error || '操作失败');
+    }
   };
 
   const getChartOption = () => {
@@ -214,11 +217,22 @@ const AdminBills = () => {
       width: 80
     },
     {
-      title: '状态',
+      title: '账单状态',
       dataIndex: 'status',
       width: 100,
       render: (val) => {
         const status = BILL_STATUS_MAP[val];
+        return <Tag color={status.color}>{status.text}</Tag>;
+      }
+    },
+    {
+      title: '争议状态',
+      dataIndex: 'dispute_status_info',
+      width: 100,
+      render: (val, record) => {
+        const disputeStatus = val || record.dispute_status || 'none';
+        const status = DISPUTE_STATUS_MAP[disputeStatus];
+        if (disputeStatus === 'none') return '-';
         return <Tag color={status.color}>{status.text}</Tag>;
       }
     },
@@ -229,15 +243,9 @@ const AdminBills = () => {
       render: (val) => val ? dayjs(val).format('YYYY-MM-DD HH:mm') : '-'
     },
     {
-      title: '支付时间',
-      dataIndex: 'paid_at',
-      width: 160,
-      render: (val) => val ? dayjs(val).format('YYYY-MM-DD HH:mm') : '-'
-    },
-    {
       title: '操作',
       key: 'action',
-      width: 220,
+      width: 260,
       fixed: 'right',
       render: (_, record) => (
         <Space>
@@ -249,7 +257,7 @@ const AdminBills = () => {
           >
             详情
           </Button>
-          {(record.status === 'issued' || record.status === 'overdue') && (
+          {(record.status === 'issued' || record.status === 'overdue' || record.status === 'adjusted') && (
             <Button
               type="link"
               size="small"
@@ -268,17 +276,6 @@ const AdminBills = () => {
               onClick={() => handleMarkOverdue(record.id)}
             >
               标记逾期
-            </Button>
-          )}
-          {(record.status === 'issued' || record.status === 'overdue') && (
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<CloseOutlined />}
-              onClick={() => handleCancelBill(record.id)}
-            >
-              取消
             </Button>
           )}
         </Space>
@@ -300,37 +297,95 @@ const AdminBills = () => {
     {
       title: '计费方式',
       dataIndex: 'billing_method',
-      width: 100,
+      width: 120,
       render: (val) => BILLING_METHOD_MAP[val]
     },
     {
       title: '单价',
       dataIndex: 'unit_price',
-      width: 100,
-      render: (val, record) => `¥${val.toFixed(2)}/${record.billing_method === 'monthly' ? '月' : record.billing_method === 'daily' ? '天' : record.category_unit || '单位'}`
+      width: 120,
+      render: (val, record) => record.billing_method === 'adjustment' ? '-' : `¥${val.toFixed(2)}/${record.billing_method === 'monthly' ? '月' : record.billing_method === 'daily' ? '天' : record.category_unit || '单位'}`
     },
     {
       title: '数量',
       dataIndex: 'quantity',
       width: 100,
-      render: (val, record) => `${val} ${record.category_unit || ''}`
+      render: (val, record) => record.billing_method === 'adjustment' ? '-' : `${val} ${record.category_unit || ''}`
     },
     {
       title: '天数',
       dataIndex: 'days',
-      width: 80
+      width: 80,
+      render: (val, record) => record.billing_method === 'adjustment' ? '-' : val
     },
     {
       title: '金额',
       dataIndex: 'amount',
       width: 100,
-      render: (val) => <Text strong>¥{val.toFixed(2)}</Text>
+      render: (val) => <Text strong style={{ color: val < 0 ? '#52c41a' : '#f5222d' }}>{val < 0 ? '-' : ''}¥{Math.abs(val).toFixed(2)}</Text>
     },
     {
       title: '说明',
       dataIndex: 'description'
     }
   ];
+
+  const disputeColumns = [
+    {
+      title: '申诉时间',
+      dataIndex: 'submitted_at',
+      width: 160,
+      render: (val) => dayjs(val).format('YYYY-MM-DD HH:mm')
+    },
+    {
+      title: '商户',
+      dataIndex: 'merchant_name',
+      width: 120
+    },
+    {
+      title: '申诉理由',
+      dataIndex: 'reason'
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 100,
+      render: (val) => {
+        const status = DISPUTE_STATUS_MAP[val];
+        return <Tag color={status.color}>{status.text}</Tag>;
+      }
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_, record) => (
+        record.status === 'pending' && selectedBill && (
+          <Space>
+            <Button
+              type="link"
+              size="small"
+              icon={<CheckOutlined />}
+              onClick={() => openDisputeAction('approve', record)}
+            >
+              通过并调整
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<StopOutlined />}
+              onClick={() => openDisputeAction('reject', record)}
+            >
+              驳回
+            </Button>
+          </Space>
+        )
+      )
+    }
+  ];
+
+  const pendingDisputesCount = bills?.filter(b => b.dispute_status_info === 'pending').length || 0;
 
   return (
     <div>
@@ -371,11 +426,10 @@ const AdminBills = () => {
         <Col span={6}>
           <Card>
             <Statistic
-              title="回款率"
-              value={summary?.summary?.collectionRate || 0}
-              precision={2}
-              suffix="%"
-              valueStyle={{ color: '#722ed1' }}
+              title="待处理申诉"
+              value={pendingDisputesCount}
+              prefix={<DisconnectOutlined />}
+              valueStyle={{ color: pendingDisputesCount > 0 ? '#f5222d' : '#8c8c8c' }}
             />
           </Card>
         </Col>
@@ -384,6 +438,20 @@ const AdminBills = () => {
       <Card title="营收趋势" style={{ marginBottom: 16 }}>
         <ReactECharts option={getChartOption()} style={{ height: 300 }} />
       </Card>
+
+      {pendingDisputesCount > 0 && (
+        <Alert
+          message={`有 ${pendingDisputesCount} 张账单存在待处理的商户申诉，请及时审核`}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          action={
+            <Button size="small" type="primary" onClick={() => setFilters({ ...filters, status: '' })}>
+              查看全部
+            </Button>
+          }
+        />
+      )}
 
       <Card>
         <Space style={{ marginBottom: 16 }} wrap>
@@ -436,7 +504,7 @@ const AdminBills = () => {
           dataSource={bills}
           rowKey="id"
           loading={loading || summaryLoading}
-          scroll={{ x: 1300 }}
+          scroll={{ x: 1400 }}
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
@@ -495,23 +563,31 @@ const AdminBills = () => {
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
         footer={null}
-        width={900}
+        width={1100}
       >
         {selectedBill && (
           <div>
             <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
               <Descriptions.Item label="账单编号">{selectedBill.bill_no}</Descriptions.Item>
-              <Descriptions.Item label="状态">
+              <Descriptions.Item label="账单状态">
                 <Tag color={BILL_STATUS_MAP[selectedBill.status].color}>
                   {BILL_STATUS_MAP[selectedBill.status].text}
                 </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="商户">{selectedBill.merchant_name}</Descriptions.Item>
-              <Descriptions.Item label="公司">{selectedBill.merchant_company}</Descriptions.Item>
+              <Descriptions.Item label="争议状态">
+                <Tag color={DISPUTE_STATUS_MAP[selectedBill.dispute_status || 'none'].color}>
+                  {DISPUTE_STATUS_MAP[selectedBill.dispute_status || 'none'].text}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="商户">{selectedBill.merchant_name} / {selectedBill.merchant_company}</Descriptions.Item>
               <Descriptions.Item label="账期">{selectedBill.billing_period}</Descriptions.Item>
-              <Descriptions.Item label="总金额">
+              <Descriptions.Item label="原始金额">¥{selectedBill.total_amount.toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="调整金额">
+                {selectedBill.adjusted_amount ? <Text style={{ color: '#52c41a' }}>-¥{selectedBill.adjusted_amount.toFixed(2)}</Text> : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="最终应收金额" span={2}>
                 <Text strong style={{ color: '#f5222d', fontSize: 18 }}>
-                  ¥{selectedBill.total_amount.toFixed(2)}
+                  ¥{(selectedBill.final_amount || selectedBill.total_amount).toFixed(2)}
                 </Text>
               </Descriptions.Item>
               <Descriptions.Item label="出单时间">
@@ -520,50 +596,57 @@ const AdminBills = () => {
               <Descriptions.Item label="支付时间">
                 {selectedBill.paid_at ? dayjs(selectedBill.paid_at).format('YYYY-MM-DD HH:mm') : '-'}
               </Descriptions.Item>
-              {selectedBill.remarks && (
-                <Descriptions.Item label="备注" span={2}>
-                  {selectedBill.remarks}
-                </Descriptions.Item>
-              )}
             </Descriptions>
 
-            <Card size="small" title="账单明细" style={{ marginBottom: 16 }}>
-              <AntTable
-                columns={itemColumns}
-                dataSource={selectedBill.items}
-                rowKey="id"
-                size="small"
-                pagination={false}
-                summary={(pageData) => {
-                  let totalAmount = 0;
-                  pageData.forEach(({ amount }) => {
-                    totalAmount += amount;
-                  });
-                  return (
-                    <AntTable.Summary>
-                      <AntTable.Summary.Row>
-                        <AntTable.Summary.Cell index={0} colSpan={6}>
-                          <Text strong>合计</Text>
-                        </AntTable.Summary.Cell>
-                        <AntTable.Summary.Cell index={6}>
-                          <Text strong style={{ color: '#f5222d' }}>¥{totalAmount.toFixed(2)}</Text>
-                        </AntTable.Summary.Cell>
-                        <AntTable.Summary.Cell index={7}></AntTable.Summary.Cell>
-                      </AntTable.Summary.Row>
-                    </AntTable.Summary>
-                  );
-                }}
-              />
-            </Card>
+            <Tabs defaultActiveKey="items">
+              <TabPane tab="账单明细" key="items">
+                <Card size="small">
+                  <AntTable
+                    columns={itemColumns}
+                    dataSource={[...selectedBill.items, ...(selectedBill.adjustmentItems || [])]}
+                    rowKey="id"
+                    size="small"
+                    pagination={false}
+                    summary={(pageData) => {
+                      let totalAmount = 0;
+                      pageData.forEach(({ amount }) => {
+                        totalAmount += amount;
+                      });
+                      return (
+                        <AntTable.Summary>
+                          <AntTable.Summary.Row>
+                            <AntTable.Summary.Cell index={0} colSpan={6}>
+                              <Text strong>合计（最终应收）</Text>
+                            </AntTable.Summary.Cell>
+                            <AntTable.Summary.Cell index={6}>
+                              <Text strong style={{ color: '#f5222d' }}>¥{(selectedBill.final_amount || selectedBill.total_amount).toFixed(2)}</Text>
+                            </AntTable.Summary.Cell>
+                            <AntTable.Summary.Cell index={7}></AntTable.Summary.Cell>
+                          </AntTable.Summary.Row>
+                        </AntTable.Summary>
+                      );
+                    }}
+                  />
+                </Card>
+              </TabPane>
+              <TabPane tab={`申诉记录 (${selectedBill.disputes?.length || 0})`} key="disputes">
+                {selectedBill.disputes && selectedBill.disputes.length > 0 ? (
+                  <Table
+                    columns={disputeColumns}
+                    dataSource={selectedBill.disputes}
+                    rowKey="id"
+                    size="small"
+                    pagination={false}
+                  />
+                ) : (
+                  <Alert message="暂无申诉记录" type="info" showIcon />
+                )}
+              </TabPane>
+            </Tabs>
 
             <div style={{ marginTop: 16, textAlign: 'right' }}>
               <Space>
-                <Button
-                  icon={<DownloadOutlined />}
-                >
-                  下载账单
-                </Button>
-                {(selectedBill.status === 'issued' || selectedBill.status === 'overdue') && (
+                {(selectedBill.status === 'issued' || selectedBill.status === 'overdue' || selectedBill.status === 'adjusted') && (
                   <Button
                     type="primary"
                     icon={<CheckCircleOutlined />}
@@ -578,6 +661,67 @@ const AdminBills = () => {
                 <Button onClick={() => setDetailModalVisible(false)}>关闭</Button>
               </Space>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title={disputeActionModal.action === 'approve' ? '审核通过并调整金额' : '驳回申诉'}
+        open={disputeActionModal.visible}
+        onCancel={() => setDisputeActionModal({ visible: false, action: null, dispute: null })}
+        footer={null}
+        width={500}
+      >
+        {disputeActionModal.dispute && (
+          <div>
+            <Alert
+              message="商户申诉理由"
+              description={disputeActionModal.dispute.reason}
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+            <Form
+              form={disputeForm}
+              layout="vertical"
+              onFinish={handleDisputeAction}
+            >
+              {disputeActionModal.action === 'approve' && (
+                <Form.Item
+                  name="adjustment_amount"
+                  label="调整金额（元）"
+                  rules={[{ required: true, message: '请输入调整金额', type: 'number', min: 0.01 }]}
+                  tooltip="将从账单总金额中扣除该金额，生成红字调整明细"
+                >
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    placeholder="请输入调整金额"
+                    min={0.01}
+                    max={selectedBill?.total_amount || 0}
+                    step={1}
+                    precision={2}
+                    prefix="¥"
+                  />
+                </Form.Item>
+              )}
+              <Form.Item
+                name="admin_notes"
+                label={disputeActionModal.action === 'approve' ? '调整说明' : '驳回理由'}
+                rules={[{ required: true, message: '请填写备注说明' }]}
+              >
+                <TextArea rows={3} placeholder={disputeActionModal.action === 'approve' ? '请说明调整原因...' : '请说明驳回原因...'} maxLength={300} showCount />
+              </Form.Item>
+              <Form.Item>
+                <Space>
+                  <Button type="primary" htmlType="submit">
+                    {disputeActionModal.action === 'approve' ? '确认通过并调整' : '确认驳回'}
+                  </Button>
+                  <Button onClick={() => setDisputeActionModal({ visible: false, action: null, dispute: null })}>
+                    取消
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
           </div>
         )}
       </Modal>

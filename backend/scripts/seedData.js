@@ -9,6 +9,10 @@ const seedData = () => {
 
   try {
     db.exec('DELETE FROM system_logs');
+    db.exec('DELETE FROM bill_disputes');
+    db.exec('DELETE FROM bill_items');
+    db.exec('DELETE FROM bills');
+    db.exec('DELETE FROM billing_tiers');
     db.exec('DELETE FROM transactions');
     db.exec('DELETE FROM outbound_allocations');
     db.exec('DELETE FROM outbound_items');
@@ -21,7 +25,7 @@ const seedData = () => {
     db.exec('DELETE FROM locations');
     db.exec('DELETE FROM warehouses');
     db.exec('DELETE FROM users');
-    db.exec("DELETE FROM sqlite_sequence WHERE name IN ('users', 'warehouses', 'locations', 'goods_categories', 'leases', 'inventory_batches', 'inbound_orders', 'inbound_items', 'outbound_orders', 'outbound_items', 'outbound_allocations', 'transactions', 'system_logs')");
+    db.exec("DELETE FROM sqlite_sequence WHERE name IN ('users', 'warehouses', 'locations', 'goods_categories', 'leases', 'inventory_batches', 'inbound_orders', 'inbound_items', 'outbound_orders', 'outbound_items', 'outbound_allocations', 'transactions', 'bills', 'bill_items', 'billing_tiers', 'bill_disputes', 'system_logs')");
 
     console.log('✅ 清空旧数据完成');
 
@@ -231,8 +235,8 @@ const seedData = () => {
     `);
 
     const txnStmt = db.prepare(`
-      INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, batch_id, quantity, unit, operator_id, remarks, txn_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, batch_id, lease_id, quantity, unit, operator_id, remarks, txn_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     inboundOrders.forEach((order, idx) => {
@@ -250,14 +254,14 @@ const seedData = () => {
       if (idx === 0) {
         inboundItemStmt.run(orderId, 1, generateBatchNo(order.arrivalDate), 25, 25, '袋', null, moment().add(300, 'days').format('YYYY-MM-DD'), 1, 'completed', completedAt);
         if (order.status === 'completed') {
-          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 1, 25, '袋', 1, '入库大米25袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
+          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 1, 1, 25, '袋', 1, '入库大米25袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
         }
       } else if (idx === 1) {
         inboundItemStmt.run(orderId, 2, generateBatchNo(order.arrivalDate), 20, 20, '袋', null, moment().add(120, 'days').format('YYYY-MM-DD'), 2, 'completed', completedAt);
         inboundItemStmt.run(orderId, 1, generateBatchNo(order.arrivalDate.clone().add(30, 'days')), 15, 15, '袋', null, moment().add(330, 'days').format('YYYY-MM-DD'), 1, 'completed', completedAt);
         if (order.status === 'completed') {
-          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 2, 2, 3, 20, '袋', 1, '入库面粉20袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
-          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 2, 15, '袋', 1, '入库大米15袋', order.arrivalDate.clone().add(25, 'days').format('YYYY-MM-DD HH:mm:ss'));
+          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 2, 2, 3, 2, 20, '袋', 1, '入库面粉20袋', order.arrivalDate.format('YYYY-MM-DD HH:mm:ss'));
+          txnStmt.run(generateTxnNo(), 'inbound', orderId, orderNo, order.merchantId, order.warehouseId, 1, 1, 2, 1, 15, '袋', 1, '入库大米15袋', order.arrivalDate.clone().add(25, 'days').format('YYYY-MM-DD HH:mm:ss'));
         }
       } else if (idx === 2) {
         inboundItemStmt.run(orderId, 4, generateBatchNo(order.arrivalDate), 30, 30, '箱', null, moment().add(7, 'days').format('YYYY-MM-DD'), 49, 'completed', completedAt);
@@ -270,6 +274,7 @@ const seedData = () => {
       } else {
         const categoryId = [8, 13, 10, 11][idx - 3] || 1;
         const locationId = [5, 10, 53, 54][idx - 3] || 1;
+        const leaseId = [8, 6, 10, 11][idx - 3] || 1;
         const qty = [75, 330, 100, 30][idx - 3] || 10;
         inboundItemStmt.run(orderId, categoryId, generateBatchNo(order.arrivalDate), qty, qty, categories[categoryId - 1].unit, null, null, locationId, 'completed', completedAt);
       }
@@ -323,8 +328,9 @@ const seedData = () => {
         outboundAllocStmt.run(itemId, batchId, order.totalQty, order.status === 'completed' ? order.totalQty : 0);
 
         if (order.status === 'completed') {
+          const batchLeaseId = [1, 2, 7, 11, 3, 7][idx] || 1;
           txnStmt.run(generateTxnNo(), 'outbound', orderId, orderNo, order.merchantId, order.warehouseId,
-            [1, 2, 10, 54, 49, 10][idx] || 1, categoryId, batchId, order.totalQty, unit, 1,
+            [1, 2, 10, 54, 49, 10][idx] || 1, categoryId, batchId, batchLeaseId, order.totalQty, unit, 1,
             `出库${categories[categoryId - 1].name}${order.totalQty}${unit}`,
             order.deliveryDate.format('YYYY-MM-DD HH:mm:ss'));
         }
@@ -332,18 +338,18 @@ const seedData = () => {
     });
 
     const recentTxns = [
-      { type: 'inbound', merchantId: 2, warehouseId: 1, locationId: 1, categoryId: 1, qty: 20, unit: '袋', date: moment().subtract(25, 'days'), batchId: 2 },
-      { type: 'inbound', merchantId: 2, warehouseId: 3, locationId: 49, categoryId: 4, qty: 35, unit: '箱', date: moment().subtract(3, 'days'), batchId: 7 },
-      { type: 'inbound', merchantId: 2, warehouseId: 3, locationId: 50, categoryId: 5, qty: 80, unit: '公斤', date: moment().subtract(2, 'days'), batchId: 8 },
-      { type: 'outbound', merchantId: 3, warehouseId: 1, locationId: 11, categoryId: 13, qty: 100, unit: '件', date: moment().subtract(2, 'days'), batchId: 14 },
-      { type: 'outbound', merchantId: 5, warehouseId: 2, locationId: 54, categoryId: 11, qty: 20, unit: '台', date: moment().subtract(10, 'days'), batchId: 21 },
-      { type: 'inbound', merchantId: 2, warehouseId: 1, locationId: 3, categoryId: 3, qty: 40, unit: '桶', date: moment().subtract(8, 'days'), batchId: 5 },
-      { type: 'outbound', merchantId: 2, warehouseId: 3, locationId: 49, categoryId: 4, qty: 10, unit: '箱', date: moment().subtract(15, 'days'), batchId: 6 },
-      { type: 'inbound', merchantId: 3, warehouseId: 1, locationId: 10, categoryId: 13, qty: 180, unit: '件', date: moment().subtract(1, 'days'), batchId: 13 },
-      { type: 'inbound', merchantId: 3, warehouseId: 1, locationId: 11, categoryId: 13, qty: 120, unit: '件', date: moment().subtract(2, 'days'), batchId: 14 },
-      { type: 'outbound', merchantId: 2, warehouseId: 1, locationId: 1, categoryId: 1, qty: 5, unit: '袋', date: moment().subtract(5, 'days'), batchId: 1 },
-      { type: 'adjustment', merchantId: 2, warehouseId: 1, locationId: 2, categoryId: 2, qty: -1, unit: '袋', date: moment().subtract(10, 'days'), batchId: 3 },
-      { type: 'transfer', merchantId: 2, warehouseId: 4, locationId: 97, categoryId: 6, qty: 25, unit: '箱', date: moment().subtract(28, 'days'), batchId: 10 }
+      { type: 'inbound', merchantId: 2, warehouseId: 1, locationId: 1, categoryId: 1, qty: 20, unit: '袋', date: moment().subtract(25, 'days'), batchId: 2, leaseId: 1 },
+      { type: 'inbound', merchantId: 2, warehouseId: 3, locationId: 49, categoryId: 4, qty: 35, unit: '箱', date: moment().subtract(3, 'days'), batchId: 7, leaseId: 3 },
+      { type: 'inbound', merchantId: 2, warehouseId: 3, locationId: 50, categoryId: 5, qty: 80, unit: '公斤', date: moment().subtract(2, 'days'), batchId: 8, leaseId: 4 },
+      { type: 'outbound', merchantId: 3, warehouseId: 1, locationId: 11, categoryId: 13, qty: 100, unit: '件', date: moment().subtract(2, 'days'), batchId: 14, leaseId: 7 },
+      { type: 'outbound', merchantId: 5, warehouseId: 2, locationId: 54, categoryId: 11, qty: 20, unit: '台', date: moment().subtract(10, 'days'), batchId: 21, leaseId: 11 },
+      { type: 'inbound', merchantId: 2, warehouseId: 1, locationId: 3, categoryId: 3, qty: 40, unit: '桶', date: moment().subtract(8, 'days'), batchId: 5, leaseId: 13 },
+      { type: 'outbound', merchantId: 2, warehouseId: 3, locationId: 49, categoryId: 4, qty: 10, unit: '箱', date: moment().subtract(15, 'days'), batchId: 6, leaseId: 3 },
+      { type: 'inbound', merchantId: 3, warehouseId: 1, locationId: 10, categoryId: 13, qty: 180, unit: '件', date: moment().subtract(1, 'days'), batchId: 13, leaseId: 6 },
+      { type: 'inbound', merchantId: 3, warehouseId: 1, locationId: 11, categoryId: 13, qty: 120, unit: '件', date: moment().subtract(2, 'days'), batchId: 14, leaseId: 7 },
+      { type: 'outbound', merchantId: 2, warehouseId: 1, locationId: 1, categoryId: 1, qty: 5, unit: '袋', date: moment().subtract(5, 'days'), batchId: 1, leaseId: 1 },
+      { type: 'adjustment', merchantId: 2, warehouseId: 1, locationId: 2, categoryId: 2, qty: -1, unit: '袋', date: moment().subtract(10, 'days'), batchId: 3, leaseId: 2 },
+      { type: 'transfer', merchantId: 2, warehouseId: 4, locationId: 97, categoryId: 6, qty: 25, unit: '箱', date: moment().subtract(28, 'days'), batchId: 10, leaseId: 5 }
     ];
 
     recentTxns.forEach(t => {
@@ -353,12 +359,28 @@ const seedData = () => {
                     'ADJ' + t.date.format('YYYYMMDD') + '001';
       
       txnStmt.run(generateTxnNo(), t.type, 100 + Math.floor(Math.random() * 100), refNo,
-        t.merchantId, t.warehouseId, t.locationId, t.categoryId, t.batchId || null,
+        t.merchantId, t.warehouseId, t.locationId, t.categoryId, t.batchId || null, t.leaseId || null,
         t.qty, t.unit, 1, `${t.type === 'inbound' ? '入库' : t.type === 'outbound' ? '出库' : t.type === 'transfer' ? '移库' : '调整'}${categories[t.categoryId - 1].name}${t.qty}${t.unit}`,
         t.date.format('YYYY-MM-DD HH:mm:ss'));
     });
 
     console.log('✅ 出库单和交易流水数据填充完成');
+
+    const existingTiers = db.prepare('SELECT COUNT(*) as count FROM billing_tiers').get().count;
+    if (existingTiers === 0) {
+      const insertTier = db.prepare(`
+        INSERT INTO billing_tiers (billing_method, tier_from, tier_to, unit_price, description)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      
+      insertTier.run('per_pallet', 0, 100, 2.5, '0-100托盘单价');
+      insertTier.run('per_pallet', 101, 500, 2.0, '101-500托盘单价');
+      insertTier.run('per_pallet', 501, null, 1.5, '500以上托盘单价');
+      insertTier.run('per_volume', 0, 100, 1.8, '0-100方单价');
+      insertTier.run('per_volume', 101, 500, 1.4, '101-500方单价');
+      insertTier.run('per_volume', 501, null, 1.0, '500以上方单价');
+      console.log('✅ 阶梯价格数据填充完成');
+    }
 
     const logStmt = db.prepare(`
       INSERT INTO system_logs (user_id, action, module, details)

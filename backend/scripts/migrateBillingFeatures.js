@@ -49,6 +49,15 @@ const migrate = () => {
     db.exec(`ALTER TABLE bills ADD COLUMN final_amount REAL`);
   }
 
+  const txnColumns = db.prepare("PRAGMA table_info(transactions)").all();
+  const txnColumnNames = txnColumns.map(c => c.name);
+  
+  if (!txnColumnNames.includes('lease_id')) {
+    db.exec(`ALTER TABLE transactions ADD COLUMN lease_id INTEGER`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_lease ON transactions(lease_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_batch ON transactions(batch_id)`);
+  }
+
   const existingTiers = db.prepare('SELECT COUNT(*) as count FROM billing_tiers').get().count;
   if (existingTiers === 0) {
     const insertTier = db.prepare(`

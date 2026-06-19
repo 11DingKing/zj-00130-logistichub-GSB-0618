@@ -207,12 +207,14 @@ const initDB = () => {
       location_id INTEGER,
       category_id INTEGER,
       batch_id INTEGER,
+      lease_id INTEGER,
       quantity REAL NOT NULL,
       unit TEXT,
       operator_id INTEGER,
       txn_date DATETIME DEFAULT CURRENT_TIMESTAMP,
       remarks TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (lease_id) REFERENCES leases(id)
     );
 
     CREATE TABLE IF NOT EXISTS inventory_transfers (
@@ -251,8 +253,12 @@ const initDB = () => {
       billing_end_date DATE NOT NULL,
       total_amount REAL DEFAULT 0,
       paid_amount REAL DEFAULT 0,
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'issued', 'paid', 'overdue', 'cancelled')),
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'issued', 'paid', 'overdue', 'cancelled', 'adjusted')),
+      dispute_status TEXT DEFAULT 'none' CHECK(dispute_status IN ('none', 'pending', 'approved', 'rejected', 'adjusted')),
+      adjusted_amount REAL DEFAULT 0,
+      final_amount REAL,
       due_date DATE,
+      issued_at DATETIME,
       paid_at DATETIME,
       remarks TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -266,6 +272,7 @@ const initDB = () => {
       bill_id INTEGER NOT NULL,
       lease_id INTEGER,
       location_id INTEGER,
+      category_id INTEGER,
       description TEXT NOT NULL,
       billing_method TEXT NOT NULL,
       unit_price REAL NOT NULL,
@@ -276,7 +283,35 @@ const initDB = () => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (bill_id) REFERENCES bills(id),
       FOREIGN KEY (lease_id) REFERENCES leases(id),
-      FOREIGN KEY (location_id) REFERENCES locations(id)
+      FOREIGN KEY (location_id) REFERENCES locations(id),
+      FOREIGN KEY (category_id) REFERENCES goods_categories(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS billing_tiers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      billing_method TEXT NOT NULL CHECK(billing_method IN ('per_pallet', 'per_volume')),
+      tier_from REAL NOT NULL,
+      tier_to REAL,
+      unit_price REAL NOT NULL,
+      description TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS bill_disputes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bill_id INTEGER NOT NULL,
+      merchant_id INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'adjusted')),
+      admin_notes TEXT,
+      adjustment_amount REAL DEFAULT 0,
+      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      resolved_at DATETIME,
+      resolved_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (bill_id) REFERENCES bills(id),
+      FOREIGN KEY (merchant_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS warehouse_turnover_stats (
@@ -321,6 +356,8 @@ const initDB = () => {
     "CREATE INDEX IF NOT EXISTS idx_leases_status ON leases(status)",
     "CREATE INDEX IF NOT EXISTS idx_transactions_txn_date ON transactions(txn_date)",
     "CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(txn_type)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_lease ON transactions(lease_id)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_batch ON transactions(batch_id)",
     "CREATE INDEX IF NOT EXISTS idx_transfers_merchant ON inventory_transfers(merchant_id)",
     "CREATE INDEX IF NOT EXISTS idx_transfers_status ON inventory_transfers(status)",
     "CREATE INDEX IF NOT EXISTS idx_transfers_from_location ON inventory_transfers(from_location_id)",
@@ -330,6 +367,9 @@ const initDB = () => {
     "CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(status)",
     "CREATE INDEX IF NOT EXISTS idx_bill_items_bill ON bill_items(bill_id)",
     "CREATE INDEX IF NOT EXISTS idx_bill_items_lease ON bill_items(lease_id)",
+    "CREATE INDEX IF NOT EXISTS idx_billing_tiers_method ON billing_tiers(billing_method)",
+    "CREATE INDEX IF NOT EXISTS idx_bill_disputes_bill ON bill_disputes(bill_id)",
+    "CREATE INDEX IF NOT EXISTS idx_bill_disputes_status ON bill_disputes(status)",
     "CREATE INDEX IF NOT EXISTS idx_warehouse_turnover_date ON warehouse_turnover_stats(stat_date)",
     "CREATE INDEX IF NOT EXISTS idx_warehouse_turnover_warehouse ON warehouse_turnover_stats(warehouse_id)",
   ];

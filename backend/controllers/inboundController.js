@@ -478,7 +478,7 @@ const putawayItems = (req, res) => {
         );
       }
 
-      db.prepare(
+      const batchResult = db.prepare(
         `
         INSERT INTO inventory_batches (batch_no, merchant_id, category_id, location_id, lease_id, quantity, unit, unit_volume, production_date, expiry_date, inbound_date, status, last_move_date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, ?, CURRENT_DATE)
@@ -496,6 +496,7 @@ const putawayItems = (req, res) => {
         inboundItem.expiry_date,
         batchStatus,
       );
+      const newBatchId = batchResult.lastInsertRowid;
 
       db.prepare(
         `
@@ -508,8 +509,8 @@ const putawayItems = (req, res) => {
       const txnNo = generateTxnNo();
       db.prepare(
         `
-        INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, quantity, unit, operator_id, remarks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, batch_id, lease_id, quantity, unit, operator_id, remarks)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         txnNo,
@@ -520,6 +521,8 @@ const putawayItems = (req, res) => {
         order.warehouse_id,
         item.locationId,
         inboundItem.category_id,
+        newBatchId,
+        lease.id,
         putawayQty,
         inboundItem.unit,
         req.user.id,

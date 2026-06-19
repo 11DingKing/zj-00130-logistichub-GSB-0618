@@ -27,14 +27,16 @@ const calculateLeaseUsageDays = (lease, periodStart, periodEnd) => {
 const calculateDailyUsage = (leaseId, periodStart, periodEnd) => {
   const dailyUsages = db.prepare(`
     SELECT date(txn_date) as txn_day,
-           SUM(CASE WHEN txn_type = 'inbound' THEN quantity
-                    WHEN txn_type = 'outbound' THEN -quantity
-                    WHEN txn_type = 'transfer' THEN quantity
-                    ELSE 0 END) as daily_change
+           SUM(CASE 
+             WHEN txn_type = 'inbound' THEN quantity
+             WHEN txn_type = 'outbound' THEN -quantity
+             WHEN txn_type = 'transfer' THEN quantity
+             ELSE 0 
+           END) as daily_change
     FROM transactions
     WHERE lease_id = ? 
-      AND txn_date >= ? 
-      AND txn_date <= ?
+      AND date(txn_date) >= ? 
+      AND date(txn_date) <= ?
     GROUP BY date(txn_date)
     ORDER BY txn_date
   `).all(leaseId, periodStart, periodEnd);
@@ -42,23 +44,33 @@ const calculateDailyUsage = (leaseId, periodStart, periodEnd) => {
   const initialStock = db.prepare(`
     SELECT COALESCE(SUM(quantity), 0) as initial
     FROM inventory_batches
-    WHERE lease_id = ? AND inbound_date < ?
+    WHERE lease_id = ? AND date(inbound_date) < ?
   `).get(leaseId, periodStart).initial;
   
   let currentStock = initialStock;
   let totalUsage = 0;
   let days = 0;
+  let maxUsage = initialStock;
   
   const periodStartM = moment(periodStart);
   const periodEndM = moment(periodEnd);
   const totalDays = periodEndM.diff(periodStartM, 'days') + 1;
   
+  const dailyChangeMap = {};
+  dailyUsages.forEach(d => {
+    dailyChangeMap[d.txn_day] = d.daily_change;
+  });
+  
   for (let i = 0; i < totalDays; i++) {
     const currentDate = periodStartM.clone().add(i, 'days').format('YYYY-MM-DD');
-    const dayChange = dailyUsages.find(d => d.txn_day === currentDate);
+    const dayChange = dailyChangeMap[currentDate];
     
-    if (dayChange) {
-      currentStock += dayChange.daily_change;
+    if (dayChange !== undefined) {
+      currentStock += dayChange;
+    }
+    
+    if (currentStock > maxUsage) {
+      maxUsage = currentStock;
     }
     
     if (currentStock > 0) {
@@ -69,7 +81,7 @@ const calculateDailyUsage = (leaseId, periodStart, periodEnd) => {
   
   return {
     averageUsage: days > 0 ? totalUsage / days : 0,
-    maxUsage: currentStock,
+    maxUsage: Math.max(maxUsage, 0),
     daysWithStock: days
   };
 };
@@ -240,7 +252,7 @@ const getBillById = (req, res) => {
     FROM bill_items bi
     LEFT JOIN locations loc ON bi.location_id = loc.id
     LEFT JOIN goods_categories gc ON bi.category_id = gc.id
-    WHERE bi.bill_id = ?
+    WHERE bi.bill_id = ? AND bi.billing_method != 'adjustment'
     ORDER BY bi.id
   `).all(id);
 
@@ -391,11 +403,13 @@ const generateMonthlyBills = (req, res) => {
           db.prepare(`
             INSERT INTO bill_items (
               bill_id, lease_id, location_id, category_id, billing_method,
-              unit_price, quantity, days, amount, description
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              unit_price, quantity, days, unit, amount, description
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             billId, lease.id, lease.location_id, lease.category_id, lease.billing_method,
-            lease.unit_price, calculation.quantity, calculation.days, calculation.amount, description
+            lease.unit_price, calculation.quantity, calculation.days,
+            lease.billing_method === 'per_pallet' ? '托' : (lease.billing_method === 'per_volume' ? 'm³' : '天'),
+            calculation.amount, description
           );
           
           totalAmount += calculation.amount;

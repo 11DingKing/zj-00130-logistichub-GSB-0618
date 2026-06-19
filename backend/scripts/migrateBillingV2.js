@@ -99,6 +99,11 @@ const migrate = () => {
       db.exec('ALTER TABLE bill_items ADD COLUMN tier_breakdown TEXT');
       console.log('✅ bill_items 表添加 tier_breakdown 字段（阶梯计费明细 JSON）');
     }
+    const hasCategoryId = itemCols.some(c => c.name === 'category_id');
+    if (!hasCategoryId) {
+      db.exec('ALTER TABLE bill_items ADD COLUMN category_id INTEGER REFERENCES goods_categories(id)');
+      console.log('✅ bill_items 表添加 category_id 字段（账单明细品类外键）');
+    }
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS bill_disputes (

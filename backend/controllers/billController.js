@@ -39,7 +39,7 @@ const calculateLeaseUsageDays = (lease, periodStart, periodEnd) => {
   return actualEnd.diff(actualStart, "days") + 1;
 };
 
-const calculateDailyUsage = (leaseId, periodStart, periodEnd) => {
+const calculateDailyUsage = (lease, periodStart, periodEnd) => {
   const dailyUsages = db
     .prepare(
       `
@@ -49,14 +49,22 @@ const calculateDailyUsage = (leaseId, periodStart, periodEnd) => {
                     WHEN txn_type = 'transfer' THEN quantity
                     ELSE 0 END) as daily_change
     FROM transactions
-    WHERE lease_id = ? 
-      AND txn_date >= ? 
+    WHERE merchant_id = ?
+      AND location_id = ?
+      AND category_id = ?
+      AND txn_date >= ?
       AND txn_date <= ?
     GROUP BY date(txn_date)
     ORDER BY txn_date
   `,
     )
-    .all(leaseId, periodStart, periodEnd);
+    .all(
+      lease.merchant_id,
+      lease.location_id,
+      lease.category_id,
+      periodStart,
+      periodEnd,
+    );
 
   const initialStock = db
     .prepare(
@@ -66,7 +74,7 @@ const calculateDailyUsage = (leaseId, periodStart, periodEnd) => {
     WHERE lease_id = ? AND inbound_date < ?
   `,
     )
-    .get(leaseId, periodStart).initial;
+    .get(lease.id, periodStart).initial;
 
   let currentStock = initialStock;
   let totalUsage = 0;
@@ -184,7 +192,7 @@ const calculateLeaseAmount = (lease, periodStart, periodEnd) => {
   const days = calculateLeaseUsageDays(lease, periodStart, periodEnd);
   if (days <= 0) return { amount: 0, days: 0, quantity: 0 };
 
-  const usage = calculateDailyUsage(lease.id, periodStart, periodEnd);
+  const usage = calculateDailyUsage(lease, periodStart, periodEnd);
   const tiers = parsePricingTiers(lease.pricing_tiers);
   let amount = 0;
   let quantity = 0;

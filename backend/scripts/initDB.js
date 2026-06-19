@@ -266,6 +266,7 @@ const initDB = () => {
       bill_id INTEGER NOT NULL,
       lease_id INTEGER,
       location_id INTEGER,
+      category_id INTEGER,
       description TEXT NOT NULL,
       billing_method TEXT NOT NULL,
       unit_price REAL NOT NULL,
@@ -273,10 +274,13 @@ const initDB = () => {
       unit TEXT NOT NULL,
       days INTEGER,
       amount REAL NOT NULL,
+      item_type TEXT DEFAULT 'normal',
+      tier_breakdown TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (bill_id) REFERENCES bills(id),
       FOREIGN KEY (lease_id) REFERENCES leases(id),
-      FOREIGN KEY (location_id) REFERENCES locations(id)
+      FOREIGN KEY (location_id) REFERENCES locations(id),
+      FOREIGN KEY (category_id) REFERENCES goods_categories(id)
     );
 
     CREATE TABLE IF NOT EXISTS warehouse_turnover_stats (

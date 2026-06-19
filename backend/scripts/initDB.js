@@ -208,12 +208,14 @@ const initDB = () => {
       location_id INTEGER,
       category_id INTEGER,
       batch_id INTEGER,
+      lease_id INTEGER,
       quantity REAL NOT NULL,
       unit TEXT,
       operator_id INTEGER,
       txn_date DATETIME DEFAULT CURRENT_TIMESTAMP,
       remarks TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (lease_id) REFERENCES leases(id)
     );
 
     CREATE TABLE IF NOT EXISTS inventory_transfers (
@@ -347,6 +349,8 @@ const initDB = () => {
     "CREATE INDEX IF NOT EXISTS idx_leases_status ON leases(status)",
     "CREATE INDEX IF NOT EXISTS idx_transactions_txn_date ON transactions(txn_date)",
     "CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(txn_type)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_lease ON transactions(lease_id)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_batch ON transactions(batch_id)",
     "CREATE INDEX IF NOT EXISTS idx_transfers_merchant ON inventory_transfers(merchant_id)",
     "CREATE INDEX IF NOT EXISTS idx_transfers_status ON inventory_transfers(status)",
     "CREATE INDEX IF NOT EXISTS idx_transfers_from_location ON inventory_transfers(from_location_id)",

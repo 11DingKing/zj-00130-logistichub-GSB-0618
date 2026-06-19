@@ -508,8 +508,8 @@ const putawayItems = (req, res) => {
       const txnNo = generateTxnNo();
       db.prepare(
         `
-        INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, quantity, unit, operator_id, remarks)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO transactions (txn_no, txn_type, reference_id, reference_no, merchant_id, warehouse_id, location_id, category_id, lease_id, quantity, unit, operator_id, remarks)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       ).run(
         txnNo,
@@ -520,6 +520,7 @@ const putawayItems = (req, res) => {
         order.warehouse_id,
         item.locationId,
         inboundItem.category_id,
+        lease.id,
         putawayQty,
         inboundItem.unit,
         req.user.id,

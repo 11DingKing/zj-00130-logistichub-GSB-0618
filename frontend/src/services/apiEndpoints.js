@@ -79,6 +79,8 @@ export const statsAPI = {
     api.get("/stats/slow-moving-ratio", { params }),
   getTransactions: (params) => api.get("/stats/transactions", { params }),
   getMerchantOverview: () => api.get("/stats/merchant/overview"),
+  getMerchantBilling: (params) =>
+    api.get("/stats/merchant/billing", { params }),
   getIncomeTrend: (params) => api.get("/stats/income-trend", { params }),
   getWarehouseTurnover: (params) =>
     api.get("/stats/warehouse-turnover", { params }),

@@ -60,6 +60,14 @@ const migrate = () => {
     console.log('⚠️  bills 字段可能已存在，跳过');
   }
 
+  try {
+    db.exec(`ALTER TABLE transactions ADD COLUMN lease_id INTEGER;`);
+    console.log('✅ 添加 transactions.lease_id 字段');
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_lease ON transactions(lease_id);`); } catch(_) {}
+  } catch (e) {
+    console.log('⚠️  transactions.lease_id 字段可能已存在，跳过');
+  }
+
   console.log('🎉 迁移完成！');
 };
 

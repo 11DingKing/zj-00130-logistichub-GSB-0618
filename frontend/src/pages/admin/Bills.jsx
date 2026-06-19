@@ -692,7 +692,7 @@ const AdminBills = () => {
                       <div style={{ fontSize: 11, color: '#8c8c8c' }}>
                         {tiers.map((t, i) => (
                           <div key={i}>
-                            阶梯{t.tier}: {t.min}-{t.max || '以上'} @ ¥{t.price}/单位/天 × {t.quantity} × {t.days}天 = ¥{t.amount.toFixed(2)}
+                            阶梯{t.tierIndex + 1}: {t.min}-{t.max != null ? t.max : '以上'} @ ¥{t.price}/单位/天 × {t.quantityInTier} × {t.days}天 = ¥{Number(t.amount).toFixed(2)}
                           </div>
                         ))}
                       </div>
